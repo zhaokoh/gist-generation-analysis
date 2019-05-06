@@ -1,0 +1,307 @@
+---
+title: "V0 Mechanical Turk Analysis - 12/03/2019"
+geometry: "left=0.5cm,right=0.5cm,top=0.5cm,bottom=0.5cm"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,
+                      results = "hide",
+                      cache = FALSE)
+knitr::read_chunk('./plot_word_cloud.R')
+```
+
+This page describes the steps that I undertook to analyse the pilot data from Mechanical Turk.
+
+Data Files:
+
+
+### Prepare R environment and read the data file.
+
+```{r import library, message=FALSE, include=FALSE}
+library(car)
+library(cowplot)
+library(data.table)
+library(dplyr)
+library(ggplot2)
+library(ggpubr)
+library(jpeg)
+library(knitr)
+library(lme4)
+library(lsr)
+library(magick)
+library(multcomp)
+library(nlme)
+library(psych)
+library(pwr)
+library(rlist)
+library(tidyverse)
+library(tidyr)
+
+# This is for the word cloud
+library("tm")
+library("SnowballC")
+library("wordcloud")
+library("RColorBrewer")
+```
+```{r parameters, echo=TRUE, results='markup'}
+# Mechanical Turk Data Files
+# summary_file = '../../data/pilot/v0_mt_20190306/gist_imgset_1_summary_19_03_06.csv'
+# details_file = '../../data/pilot/v0_mt_20190306/gist_imgset_1_raw_19_03_06.csv'
+# included_participants = c(681418, 819055, 359390, 225362, 304875, 597984, 995980)
+
+# Lab Data Files
+# summary_file = '../../data/pilot/v0_20190312/gist_imgset_1_summary_19_03_12.csv'
+# details_file = '../../data/pilot/v0_20190312/gist_imgset_1_raw_19_03_12.csv'
+# included_participants = c(10, 13)
+
+# All Data Files
+summary_file = '../../data/pilot/v0_all/gist_imgset1_summary_all.csv'
+details_file = '../../data/pilot/v0_all/gist_imgset1_raw_all.csv'
+included_participants = c(
+  10, 13, 16, 681418, 819055, 359390, 225362, 304875, 597984, 995980,
+  450941, 
+  179958, 
+  688449,
+  371597,
+  738211,
+  805538,
+  886746,
+  543099,
+  613746,
+  748872,
+  385008,
+  109075,
+  722648,
+  575047,
+  651021,
+  856836,
+  674775,
+  831725,
+  449656,
+  886090,
+  178610,
+  137135)
+
+nishimoto_images_folder = "/Volumes/Spaceship/Alon_Gist/nishimoto-images/"
+
+```
+
+```{r constants}
+large_word_cloud = 3
+small_word_cound = 2
+```
+
+```{r read summary df file, echo=TRUE, results='markup'}
+summary_df = fread(summary_file)
+summary_df = subset(summary_df, script.subjectid %in% included_participants)
+glimpse(summary_df)
+```
+
+```{r read details df file, echo=TRUE, results='markup'}
+details_df = fread(details_file)
+details_df = subset(details_df, subject %in% included_participants)
+glimpse(details_df)
+```
+```{r analysis practice blocks}
+practice_block_df <- details_df[details_df$blockcode=='practice_block' & details_df$response != 0,];
+
+practice.data <- practice_block_df %>%
+  spread(trialcode, response) %>%
+  dplyr::select(subject, blocknum, trialnum, values.soa, values.img_file, d1, rb1, d2, rb2, d3, rb3, d4, rb4, d5, rb5, d6, rb6, d7, rb7, d8, rb8, d9, rb9, d10, rb10) %>%
+  arrange(subject, blocknum, trialnum);
+practice.data
+```
+
+```{r function-plot_word_cloud}
+
+```
+
+```{r build word cloud for practice, warning=FALSE, message=FALSE, echo=FALSE}
+uniq_imgs = unique(practice.data$values.img_file);
+word_table_matrix <- c();
+
+for (img in uniq_imgs) {
+  img.data <- practice.data[practice.data$values.img_file == img,];
+
+  par(mfrow=c(1, 2));
+  par(mai=c(0, 0, 0, 0));
+  
+  im_fullpath = paste(nishimoto_images_folder, img, sep="");
+  image_raw <- readJPEG(im_fullpath)
+
+  plot(1:10, 1:10, type="n", xaxt='n', yaxt='n', bty='n', ann=FALSE);
+  title(img, line = -2)
+  rasterImage(image_raw,1,3,10,9);
+  
+  plot_word_cloud(img.data, "", large_word_cloud);
+
+  uniq_soa = sort(unique(practice.data$values.soa));
+
+  par(mfrow=c(1, 3));
+  par(mai=c(0, 0, 0, 0));
+
+  for (soa in uniq_soa) {
+    img_soa.data <- practice.data[practice.data$values.img_file == img &
+                                    practice.data$values.soa == soa,];
+    number_of_data = nrow(unique(img_soa.data[,c('subject','blocknum','trialnum')]));
+    word_list = plot_word_cloud(img_soa.data, paste("SOA = ", soa, "ms (N=", number_of_data, ")"), small_word_cound);
+    title(img, line = -2)
+
+    word_table_matrix <- c(word_table_matrix, c(img, soa, gsub('[\n\r]', ',', as.String(word_list))))
+  }
+  
+  
+  word_table <- data.table(t(matrix(word_table_matrix, nrow = 3)))
+  setnames(word_table, 1:3, c("image", "soa", "words"))
+  write.csv(word_table, file = "practice_word_table.csv")
+}
+```
+
+```{r analysis actual blocks}
+actual_block_df <- details_df[details_df$blockcode!='practice_block' & details_df$response != 0,];
+
+experiment.data <- actual_block_df %>%
+  spread(trialcode, response) %>%
+  dplyr::select(subject, blocknum, trialnum, values.soa, values.img_file, d1, rb1, d2, rb2, d3, rb3, d4, rb4, d5, rb5, d6, rb6, d7, rb7, d8, rb8, d9, rb9, d10, rb10) %>%
+  arrange(subject, blocknum, trialnum);
+experiment.data
+```
+```{r prepare the anchor,  warning=FALSE, message=FALSE, echo=FALSE, results = 'asis'}
+uniq_imgs = unique(experiment.data$values.img_file);
+word_table_matrix <- c();
+
+for (img in uniq_imgs) {
+  print(paste("<a href='#", img, "'>", img, "</a><br/>", sep=""))
+}
+```
+
+```{r build word cloud for actual experiment, warning=FALSE, message=FALSE, echo=FALSE, results = "asis"}
+uniq_imgs = unique(experiment.data$values.img_file);
+word_table_matrix <- c();
+
+for (img in uniq_imgs) {
+  img.data <- experiment.data[experiment.data$values.img_file == img,];
+
+  par(mfrow=c(1, 2));
+  par(mai=c(0, 0, 0, 0));
+
+  print(paste("<a id='", img, "'></a><br/>", sep=""))
+  im_fullpath = paste(nishimoto_images_folder, img, sep="");
+  image_raw <- readJPEG(im_fullpath)
+
+  plot(1:10, 1:10, type="n", xaxt='n', yaxt='n', bty='n', ann=FALSE);
+  title(img, line = -2)
+  rasterImage(image_raw,1,3,10,9);
+
+  plot_word_cloud(img.data, "", large_word_cloud);
+
+  uniq_soa = sort(unique(practice.data$values.soa));
+
+  par(mfrow=c(1, 3));
+  par(mai=c(0, 0, 0, 0));
+
+  for (soa in uniq_soa) {
+    img_soa.data <- experiment.data[experiment.data$values.img_file == img &
+                                    experiment.data$values.soa == soa,];
+    number_of_data <- nrow(unique(img_soa.data[,c('subject','blocknum','trialnum')]));
+    word_freq_list <- plot_word_cloud(img_soa.data, paste("SOA = ", soa, "ms (N=", number_of_data, ")"), small_word_cound);
+
+    if (!is.null(word_freq_list)) {
+      num_of_words <- nrow(word_freq_list[, 1])
+      for (wf in 1:num_of_words) {
+        word <- paste( unlist(word_freq_list[wf, 1]), collapse='')
+        freq <- paste( unlist(word_freq_list[wf, 2]), collapse='')
+        
+        word_table_matrix <- c(word_table_matrix, c(img, soa, word, freq))
+      }
+    }
+  }
+}
+
+word_table <- data.table(t(matrix(word_table_matrix, nrow = 4)))
+setnames(word_table, 1:4, c("image", "soa", "word", "frequency"))
+write.csv(word_table, "actual_word_table.csv", row.names = FALSE)
+
+```
+
+
+```{r analyse confidence ratings,  warning=FALSE, message=FALSE, echo=FALSE}
+all_non_empty_confidence_df <- actual_block_df[which(startsWith(actual_block_df$trialcod, 'r') & actual_block_df$response != ''), ] %>%
+  subset(select = c(values.soa, response, blockcode))
+
+confidence_soa <-  data.frame(count(all_non_empty_confidence_df,values.soa, response))
+confidence_soa$values.soa <- as.factor(confidence_soa$values.soa)
+
+confidence_ratings_by_soa <- ggplot(data = confidence_soa, aes(x = values.soa, y = n, fill = response)) +
+  geom_bar(stat="identity") + theme_minimal()
+
+confidence_blockcode <-  data.frame(count(all_non_empty_confidence_df, blockcode, response))
+confidence_blockcode$response <- as.factor(confidence_blockcode$response)
+
+confidence_ratings_by_blockcode <- ggplot(data = confidence_blockcode, aes(x = blockcode, y = n, fill = response)) +
+  geom_bar(stat="identity") + theme_minimal()
+```
+
+```{r analyse NA or non-words,  warning=FALSE, message=FALSE, echo=FALSE}
+all_non_empty_words_df <- actual_block_df[which(startsWith(actual_block_df$trialcod, 'd') & actual_block_df$response != ''), ]
+
+all_non_empty_words_df$response <- tolower(all_non_empty_words_df$response)
+
+docs <- Corpus(VectorSource(all_non_empty_words_df$response));
+
+toSpace <- content_transformer(function (x , pattern ) gsub(pattern, " ", x))
+docs <- tm_map(docs, toSpace, "/")
+docs <- tm_map(docs, toSpace, "@")
+docs <- tm_map(docs, toSpace, "\\|")
+# Convert the text to lower case
+# docs <- tm_map(docs, content_transformer(tolower))
+# # Convert the 
+# # Remove numbers
+# docs <- tm_map(docs, removeNumbers)
+# # Remove english common stopwords
+# docs <- tm_map(docs, removeWords, stopwords("english"))
+# # Remove your own stop word
+# # specify your stopwords as a character vector
+# docs <- tm_map(docs, removeWords, c("blabla1", "blabla2"))
+# # Remove punctuations
+# docs <- tm_map(docs, removePunctuation)
+
+
+# Eliminate extra white spaces
+docs <- tm_map(docs, stripWhitespace)
+inspect(docs)
+
+dtm <- TermDocumentMatrix(docs)
+m <- as.matrix(dtm)
+v <- sort(rowSums(m),decreasing=TRUE)
+d <- data.frame(word = names(v),freq=v)
+  
+filter_words = as.vector(d$word)
+
+diff_words <- setdiff(filter_words, all_non_empty_words_df$response)
+for (word in diff_words) {
+  if (paste("", word) %in% all_non_empty_words_df$response |
+    paste(word, "") %in% all_non_empty_words_df$response) {
+  }
+}
+
+non_words_indices <- which(all_non_empty_words_df$response == "nothing")
+non_words_indices <- list.append(non_words_indices, which(all_non_empty_words_df$response == "na"))
+non_words_indices <- list.append(non_words_indices, which(all_non_empty_words_df$response == "no"))
+
+all_non_empty_words_summary_df <- all_non_empty_words_df[non_words_indices, ] %>%
+  subset(select = c(values.soa, blockcode, trialnum))
+
+non_words_soa <-  data.frame(count(all_non_empty_words_summary_df, blockcode, values.soa))
+non_words_soa$blockcode <- as.factor(non_words_soa$blockcode)
+non_words_soa$values.soa <- as.factor(non_words_soa$values.soa)
+
+non_words_by_soa <- ggplot(data = non_words_soa, aes(x = blockcode, y = n, fill = values.soa)) +
+  geom_bar(stat="identity") + theme_minimal()
+
+```
+

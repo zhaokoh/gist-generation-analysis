@@ -1,0 +1,368 @@
+---
+title: "Pilot Power Analysis - 06 May 2019"
+geometry: "left=2cm,right=2cm,top=2cm,bottom=2cm"
+classoption: portrait
+output:
+  pdf_document:
+    latex_engine: xelatex
+  html_document:
+    df_print: paged
+header-includes: \usepackage{xcolor}
+---
+
+## Overview
+
+This is a power analysis done based on the pilot performed with 20 images (Pilot V1).
+
+## Experiment configuration
+
+* Materials: 20 images
+* Participants: MTurk
+* Procedures: Each participant did 1 block (20 trials), entered at least 5 descriptors out of 10.
+
+```{r include=FALSE}
+source('embed_import_word_cloud.R')
+source('embed_import_libraries.R')
+source('embed_configuration.R')
+
+# Functions
+source('plot_word_cloud.R')
+```
+
+```{r read summary df file, echo=TRUE, results='markup', include = FALSE}
+summary_df = fread(summary_file)
+summary_df = subset(summary_df, script.subjectid %in% included_v1_mturk_participants)
+glimpse(summary_df)
+```
+
+```{r read details df file, echo=TRUE, results='markup', include = FALSE}
+details_df = fread(details_file)
+details_df = subset(details_df, subject %in% included_v1_mturk_participants)
+glimpse(details_df)
+```
+
+```{r define global variables, include = FALSE}
+all_df <- data.table();
+```
+
+```{r analysis practice blocks, include = FALSE}
+practice_block_df <- details_df[blockcode=='practice_block' & response != 0,];
+
+practice.data <- practice_block_df %>%
+  spread(trialcode, response) %>%
+  .[, .(subject, blocknum, trialnum, values.soa, values.img_file, 
+        d1, rb1, d2, rb2, d3, rb3, d4, rb4, d5, rb5,
+        d6, rb6, d7, rb7, d8, rb8, d9, rb9, d10, rb10)] %>%
+  arrange(subject, blocknum, trialnum);
+practice.data <- data.table(practice.data)
+
+practice.data
+```
+
+```{r build word cloud for practice, warning=FALSE, message=TRUE, echo=FALSE, results = "asis"}
+for (img in unique(practice.data$values.img_file)) {
+  img.data <- practice.data[values.img_file == img,];
+
+  total_image_data <- nrow(unique(practice.data[practice.data$values.img_file == img,]))
+
+  soa_list <- c();
+  confidence_list <- c();
+  entropy_list <- c();
+  subject_list <- c();
+  user_confidence_list <- c()
+  
+  im_fullpath = paste(nishimoto_images_folder, img, sep="");
+  image_raw <- readJPEG(im_fullpath)
+
+  for (soa in sort(unique(practice.data$values.soa))) {
+    img_soa.data <- practice.data[values.img_file == img & values.soa == soa,];
+    word_list = plot_word_cloud(img_soa.data, paste("SOA = ", soa, "ms (N=", number_of_data, ")"), small_word_cound, FALSE)
+
+    if (is.null(word_list)) {
+      word_entropy = NaN
+    } else {
+      word_entropy = dim(word_list)[1]/sum(word_list[,2])
+    }
+
+    subject_block_trial = unique(img_soa.data[,c('subject','blocknum','trialnum')])
+    number_of_data = nrow(subject_block_trial);
+
+    for (i in 1:number_of_data) {
+      current_subject <- as.String(subject_block_trial[i, .(subject)])
+      
+      soa_list <- c(soa_list, soa)
+      entropy_list <- c(entropy_list, word_entropy)
+      
+      subject_list <- c(subject_list, current_subject)
+      
+      soa_confidence = data.table(gather(img_soa.data[
+        subject == current_subject, 
+        .(rb1, rb2, rb3, rb4, rb5, rb6, rb7, rb8, rb9, rb10)]))
+      non_empty_soa_confidence = soa_confidence[value != "",]
+  
+      guess_count=dim(non_empty_soa_confidence[value == "Guess",])[1]
+      maybe_count=dim(non_empty_soa_confidence[value == "Maybe",])[1]
+      confident_count=dim(non_empty_soa_confidence[value == "Confident",])[1]
+      very_confident_count=dim(non_empty_soa_confidence[value == "Very Confident",])[1]
+  
+      soa_confidence_scores <- ((guess_count * 1) 
+                                + (maybe_count*2) 
+                                + (confident_count*3) 
+                                + (very_confident_count*4))/dim(non_empty_soa_confidence)[1]
+
+      user_confidence_list <- c(user_confidence_list, soa_confidence_scores)
+    }
+  }
+
+  temp <- data.table(img, soa_list, user_confidence_list, entropy_list, subject_list)
+  #all_df <- rbind(all_df, temp)
+}
+```
+
+## Data Types and Sample Data
+
+The following displays a sample of the data.
+
+```{r analysis actual blocks, message=FALSE, include=TRUE, results='markup'}
+actual_block_df <- details_df[blockcode != 'practice_block' & response != 0,];
+
+experiment.data <- actual_block_df %>%
+  spread(trialcode, response) %>%
+  .[, .(subject, blocknum, trialnum, values.soa, values.img_file, 
+        d1, rb1, d2, rb2, d3, rb3, d4, rb4, d5, rb5,
+        d6, rb6, d7, rb7, d8, rb8, d9, rb9, d10, rb10)] %>%
+  arrange(subject, blocknum, trialnum);
+experiment.data <- data.table(experiment.data)
+
+str(experiment.data)
+```
+
+```{r build word cloud for actual experiment, warning=FALSE, message=FALSE, echo=FALSE, results = "asis"}
+for (img in unique(experiment.data$values.img_file)) {
+  
+  img.data <- experiment.data[values.img_file == img,];
+  total_image_data <- nrow(unique(experiment.data[values.img_file == img,]))
+
+  soa_list <- c();
+  confidence_list <- c();
+  entropy_list <- c();
+  subject_list <- c();
+  user_confidence_list <- c()
+  
+  im_fullpath = paste(nishimoto_images_folder, img, sep="");
+  image_raw <- readJPEG(im_fullpath)
+
+  for (soa in sort(unique(experiment.data$values.soa))) {
+    confidence_soa_img <- c()
+    img_soa.data <- experiment.data[values.img_file == img & values.soa == soa,];
+    subject_block_trial = unique(img_soa.data[,c('subject','blocknum','trialnum')])
+    number_of_data = nrow(subject_block_trial);
+    word_list = plot_word_cloud(img_soa.data, paste("SOA = ", soa, "ms (N=", number_of_data, ")"), small_word_cound, FALSE)
+
+    if (is.null(word_list)) {
+      word_entropy = NaN
+    } else {
+      word_entropy = dim(word_list)[1]/sum(word_list[,2])
+    }
+
+    if (number_of_data == 0) {
+      next
+    }
+    
+    for (i in 1:number_of_data) {
+      current_subject <- as.String(subject_block_trial[i, .(subject)]);
+      
+      soa_list <- c(soa_list, soa)
+      entropy_list <- c(entropy_list, word_entropy)
+      subject_list <- c(subject_list, current_subject)
+      
+      soa_confidence = data.table(gather(img_soa.data[
+        subject == current_subject, 
+        .(rb1, rb2, rb3, rb4, rb5, rb6, rb7, rb8, rb9, rb10)]))
+      non_empty_soa_confidence = soa_confidence[value != "",]
+  
+      guess_count=dim(non_empty_soa_confidence[value == "Guess",])[1]
+      maybe_count=dim(non_empty_soa_confidence[value == "Maybe",])[1]
+      confident_count=dim(non_empty_soa_confidence[value == "Confident",])[1]
+      very_confident_count=dim(non_empty_soa_confidence[value == "Very Confident",])[1]
+  
+      soa_confidence_scores <- ((guess_count * 1) 
+                                + (maybe_count*2) 
+                                + (confident_count*3) 
+                                + (very_confident_count*4))/dim(non_empty_soa_confidence)[1]
+      confidence_soa_img <- c(confidence_soa_img, soa_confidence_scores)
+      user_confidence_list <- c(user_confidence_list, soa_confidence_scores)
+    }
+    
+    for (i in 1:number_of_data) {
+      confidence_list <- c(confidence_list, mean(confidence_soa_img))
+    }
+  }
+
+  temp <- data.table(img, soa_list, user_confidence_list, entropy_list, confidence_list, subject_list)
+  all_df <- rbind(all_df, temp)
+}
+```
+
+```{r plot preparation, warning=FALSE, message=FALSE, echo=FALSE}
+setnames(all_df, 1:6, c("img", "soa", "user_confidence", "entropy", "confidence", "subject_id"))
+all_df$soa = as.factor(all_df$soa)
+
+# Recode the subject id from 1 to max
+old_new_id = data.table(new_id=rownames(data.table(unique(all_df$subject_id))), old_id=unique(all_df$subject_id))
+new_id_col = c()
+
+for (i in 1:dim(all_df)[1]) {
+  current_subject_id <- all_df[i,]$subject_id
+  new_id_col <- c(new_id_col, as.character(old_new_id[old_new_id$old_id == current_subject_id, 'new_id']))
+}
+
+all_df <- cbind(new_subject_id=new_id_col, all_df)
+theme_set(theme_gray(base_size = 8))
+```
+
+## Calculate Intracorrelation coefficient (ICC)
+
+```{r models, warning=FALSE, message=FALSE, echo=FALSE}
+
+# TODO Zhao - Fixed the following so that it produces nice report
+
+## Examine individual differences
+# m.conf.ind_diff = lmer(data = all_df, user_confidence ~ 1 + (1 | new_subject_id), REML=TRUE)
+# summary(m.conf.ind_diff)
+# ICC = (0.57/(0.3563+0.57))
+
+### Using a standard model
+
+#m = lmer(data = all_df, user_confidence ~ 1 + soa133 + soa267 + (1 | new_subject_id) + (1 | img), REML=TRUE)
+
+# cohen.ES("f2") - small >= 0.02, medium >= 0.15, large >= 0.35
+m0 = lmer(data = all_df, user_confidence ~ 1 + soa + (1 | new_subject_id) + (1 | img), REML=TRUE)
+fixef(m0)["soa133"] <- 0.1
+fixef(m0)["soa267"] <- 0.1
+
+m0.sim.soa.p <- powerSim(m0, test=simr::fixed("soa"), nsim=50)
+m0.sim.soa.p
+
+m0.curve.soa.sbj <- powerCurve(m0, test=simr::fixed("soa"), along = 'new_subject_id', nsim=10)
+m0.curve.soa.img <- powerCurve(m0, test=simr::fixed("soa"), along = 'img', nsim=10)
+
+plot(m0.curve.soa.sbj)
+plot(m0.curve.soa.img)
+
+#### We use all images so extend the model
+m1 <- extend(m0, along = "img", n = 550)
+m1.curve.soa.img <- powerCurve(m1, test=simr::fixed("soa"), along = 'img', nsim=10)
+plot(m1.curve.soa.img)
+
+#### We use all images so extend the model
+m2 <- extend(m0, along = "new_subject_id", n = 500)
+m2.curve.soa.subject_id <- powerCurve(m2, test=simr::fixed("soa"), along = 'new_subject_id', nsim=100)
+m2.curve.soa.img_id <- powerCurve(m2, test=simr::fixed("soa"), along = 'img', nsim=100)
+plot(m2.curve.soa.subject_id)
+plot(m2.curve.soa.img_id)
+
+```
+
+```{r models2, warning=FALSE, message=FALSE, echo=TRUE}
+
+# m2 = lmer(data = all_df, user_confidence ~ 1 + soa + (1 | new_subject_id), REML=TRUE)
+# summary(m2)
+# doTest(m2, test = simr::fixed("soa", "kr"))
+# fixef(m2)["soa133"] <- 0.15
+# fixef(m2)["soa267"] <- 0.15
+# 
+# p1 <- powerSim(m2, simr::fixed("soa", "kr"), nsim=20)
+# p2 <- powerSim(m2, simr::random(), nsim=50)
+# 
+# m2_curve = powerCurve(m2, test=simr::fixed("soa"), along = 'new_subject_id', nsim=10)
+# plot(m2_curve)
+# 
+# 
+# 
+# 
+# m_extend <- extend(m, within="img", n=50)
+# pwr_curve_img = powerCurve(m_extend, test=simr::fixed("soa133"), along = 'img', nsim=10)
+# plot(pwr_curve_img)
+# 
+# ## 
+# 
+# 
+# 
+# 
+# 
+# 
+# summary(m.conf.ind_img_diff2)
+# 
+# anova(m.conf.ind_img_diff1, m.conf.ind_img_diff2)
+# 
+# 
+# 
+# 
+# m1.entropy.simr = makeLmer(data = all_df, entropy ~ 1 + soa133 + soa267  + (1 | subject_id), fixef = all_df$soa, VarCorr = 0.5)
+# print(m1.entropy.simr)
+# powerSim(m1.entropy.simr, test = fixed("soa133"), nsim=10)
+# 
+# 
+# 
+# m0.entropy = lmer(data = all_df, entropy ~ 1 + soa + (1 | subject_id))
+# m2.entropy = lmer(data = all_df, entropy ~ 1 + soa + (soa | subject_id) + (soa | img))
+# 
+# m1.entropy = lmer(data = all_df, entropy ~ 1 + soa67 + soa133 + soa267 + (1 | subject_id))
+# m1.confidence = lmer(data = all_df, user_confidence ~ 1 + soa + (1 | subject_id))
+# 
+# anova(m0.entropy, m1.entropy)
+# 
+# # Calculate power analysis for multiple regression
+# # See file:///Users/Zhao/Downloads/AUsing%20R%20for%20Power%20Analysis.pdf
+# pwr.f2.test(u=2, v = NULL, f2=0.15, sig.level=0.05, power=0.9)
+# 
+# # Using simr
+# # https://cran.r-project.org/web/packages/simr/simr.pdf
+# m1.entropy.simr = makeLmer(data = all_df, entropy ~ 1 + soa67 + soa133 + soa267 + (1 | subject_id), fixef = all_df$soa67, VarCorr = 0.5)
+# print(m1.entropy.simr)
+# powerSim(m2.entropy, test = fixed("soa"), nsim=10)
+# 
+# 
+# m2.entropy = lmer(data = all_df, entropy ~ 1 + soa + (1 | subject_id) + (1 | img))
+# 
+# anova(m1.entropy, m2.entropy, REML=FALSE)
+# 
+# d.residuals <- data.table(
+#   Yhat = fitted(m1.entropy),
+#   Residuals = resid(m1.entropy))
+# 
+# ## check for normality of the outcome
+# ## by examining residuals
+# ggplot(d.residuals, aes(Residuals)) +
+#   geom_histogram()
+# 
+# ## check for normality of the outcome
+# ## using QQ plot
+# ggplot(d.residuals, aes(sample = Residuals)) +
+#   stat_qq() + stat_qq_line()
+# 
+# ## check for homogeneity of variance assumption
+# ggplot(d.residuals, aes(Yhat, Residuals)) +
+#   geom_point(alpha = .2)
+# 
+# d.residuals <- data.table(
+#   Yhat = fitted(m1.confidence),
+#   Residuals = resid(m1.confidence))
+# 
+# ## check for normality of the outcome
+# ## by examining residuals
+# ggplot(d.residuals, aes(Residuals)) +
+#   geom_histogram()
+# 
+# ## check for normality of the outcome
+# ## using QQ plot
+# ggplot(d.residuals, aes(sample = Residuals)) +
+#   stat_qq() + stat_qq_line()
+# 
+# ## check for homogeneity of variance assumption
+# ggplot(d.residuals, aes(Yhat, Residuals)) +
+#   geom_point(alpha = .2)
+
+```
+

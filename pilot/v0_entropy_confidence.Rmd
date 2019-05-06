@@ -1,0 +1,303 @@
+---
+title: "V0 Analysis (Entropy and Confidence)"
+geometry: "left=0.2cm,right=0.2cm,top=0.2cm,bottom=0.2cm"
+classoption: landscape
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,
+                      results = "hide",
+                      cache = FALSE)
+knitr::read_chunk('./plot_word_cloud.R')
+knitr::opts_chunk$set(fig.width=6, fig.height=4)
+```
+
+```{r import library, echo=FALSE, message=FALSE, include=FALSE}
+library(car)
+library(cowplot)
+library(data.table)
+library(dplyr)
+library(ggplot2)
+library(ggpubr)
+library(grid)
+library(jpeg)
+library(knitr)
+library(lme4)
+library(lsr)
+library(magick)
+library(multcomp)
+library(nlme)
+library(psych)
+library(pwr)
+library(rlist)
+library(tidyverse)
+library(tidyr)
+
+# This is for the word cloud
+library("tm")
+library("SnowballC")
+library("wordcloud")
+library("RColorBrewer")
+```
+```{r parameters, echo=FALSE, results='markup', include=FALSE}
+
+# All Data Files
+summary_file = '../../data/pilot/v0_all/gist_imgset1_summary_all.csv'
+details_file = '../../data/pilot/v0_all/gist_imgset1_raw_all.csv'
+included_participants = c(
+  10, 13, 16, 681418, 819055, 359390, 225362, 304875, 597984, 995980,
+  450941, 
+  179958, 
+  688449,
+  371597,
+  738211,
+  805538,
+  886746,
+  543099,
+  613746,
+  748872,
+  #385008, # Foreign language
+  109075,
+  722648,
+  651021,
+  856836,
+  674775,
+  831725,
+  449656,
+  886090,
+  178610,
+  137135)
+
+nishimoto_images_folder = "/Volumes/Spaceship/Alon_Gist/nishimoto-images/"
+
+```
+
+```{r constants}
+large_word_cloud = 3
+small_word_cloud = 2
+```
+
+```{r read summary df file, echo=TRUE, results='markup', include = FALSE}
+summary_df = fread(summary_file)
+summary_df = subset(summary_df, script.subjectid %in% included_participants)
+glimpse(summary_df)
+```
+
+```{r read details df file, echo=TRUE, results='markup', include = FALSE}
+details_df = fread(details_file)
+details_df = subset(details_df, subject %in% included_participants)
+glimpse(details_df)
+```
+
+```{r analysis practice blocks, include = FALSE}
+practice_block_df <- details_df[details_df$blockcode=='practice_block' & details_df$response != 0,];
+
+practice.data <- practice_block_df %>%
+  spread(trialcode, response) %>%
+  dplyr::select(subject, blocknum, trialnum, values.soa, values.img_file, d1, rb1, d2, rb2, d3, rb3, d4, rb4, d5, rb5, d6, rb6, d7, rb7, d8, rb8, d9, rb9, d10, rb10) %>%
+  arrange(subject, blocknum, trialnum);
+practice.data
+```
+
+```{r function-plot_word_cloud, message=FALSE, include=FALSE}
+
+```
+
+```{r build word cloud for practice,  warning=FALSE, message=FALSE, echo=FALSE, results = "asis"}
+uniq_imgs = unique(practice.data$values.img_file);
+word_table_matrix <- c();
+
+for (img in uniq_imgs) {
+  img.data <- practice.data[practice.data$values.img_file == img,];
+
+  # par(mfrow=c(1, 2));
+  # par(mai=c(0, 0, 0, 0));
+  # 
+  # im_fullpath = paste(nishimoto_images_folder, img, sep="");
+  # image_raw <- readJPEG(im_fullpath)
+  # 
+  # plot(1:10, 1:10, type="n", xaxt='n', yaxt='n', bty='n', ann=FALSE);
+  # title(img, line = -2)
+  # rasterImage(image_raw,1,3,10,9);
+  
+  uniq_soa = sort(unique(practice.data$values.soa));
+
+  soa_list <- c();
+  confidence_list <- c();
+  entropy_list <- c();
+  n <- c();
+  
+  par(mfrow=c(2, 2));
+  par(mai=c(0, 0, 0, 0));
+
+  im_fullpath = paste(nishimoto_images_folder, img, sep="");
+  image_raw <- readJPEG(im_fullpath)
+
+  plot(1:5, 1:5, type="n", xaxt='n', yaxt='n', bty='n', ann=FALSE);
+  title(img, line = -1)
+  rasterImage(image_raw,1,1,4.5,4.5);
+  cat("\n\n\\pagebreak\n")
+
+  for (soa in uniq_soa) {
+    img_soa.data <- practice.data[practice.data$values.img_file == img &
+                                    practice.data$values.soa == soa,];
+    number_of_data = nrow(unique(img_soa.data[,c('subject','blocknum','trialnum')]));
+    word_list = plot_word_cloud(img_soa.data, paste("SOA = ", soa, "ms (N=", number_of_data, ")"), small_word_cloud, FALSE)
+    
+    if (is.null(word_list)) {
+      word_entropy = NaN
+    } else {
+      word_entropy = dim(word_list)[1]/sum(word_list[,2])
+    }
+    
+    soa_confidence = gather(img_soa.data[,c("rb1","rb2","rb3","rb4","rb5","rb6","rb7","rb8","rb9","rb10")])
+    non_empty_soa_confidence = soa_confidence[!soa_confidence$value == "",]
+    
+    guess_count=dim(non_empty_soa_confidence[non_empty_soa_confidence$value == "Guess",])[1]
+    maybe_count=dim(non_empty_soa_confidence[non_empty_soa_confidence$value == "Maybe",])[1]
+    confident_count=dim(non_empty_soa_confidence[non_empty_soa_confidence$value == "Confident",])[1]
+    very_confident_count=dim(non_empty_soa_confidence[non_empty_soa_confidence$value == "Very Confident",])[1]
+    
+    soa_confidence_scores = ((guess_count * 1) + (maybe_count*2) + (confident_count*3) + (very_confident_count*4))/dim(non_empty_soa_confidence)[1]
+    
+#    print(paste("Image: ", img, " SOA ", soa, " entropy = ", word_entropy, " confidence = ", #soa_confidence_scores, "(N=", number_of_data, ")"))
+    
+    soa_list <- c(soa_list, soa)
+    confidence_list <- c(confidence_list, soa_confidence_scores)
+    entropy_list <- c(entropy_list, word_entropy)
+    n <- c(n, number_of_data)
+    
+    #title(img, line = -2)
+
+    word_list = plot_word_cloud(img_soa.data, paste("SOA = ", soa, "ms (N=", number_of_data, ")"), small_word_cloud, title_offset = -1);
+    word_table_matrix <- c(word_table_matrix, c(img, soa, gsub('[\n\r]', ',', as.String(word_list))))
+  }
+  
+  cat("\  ")
+  temp <- data.frame(soa_list, confidence_list, entropy_list, n)
+
+  p <- ggplot(temp, aes(x = soa_list))
+  p <- p + geom_line(aes(y = entropy_list, colour = "CE"))
+  p <- p + geom_line(aes(y = confidence_list/4, colour = "Confidence"))
+  p <- p + scale_y_continuous(sec.axis = sec_axis(~.*4, name = "Confidence")) + geom_point(y=confidence_list)
+  p <- p + scale_colour_manual(values = c("blue", "red"))
+  p <- p + labs(title=paste(img, "(N=", paste(n, collapse = ','), ")"),
+                x = "SOA (ms)", y = "CE", 
+                colour = "")
+  p <- p + theme(legend.position = c(0.70, 0.9))
+  
+  print(p)
+  cat("\n\n\\pagebreak\n")
+  word_table <- data.table(t(matrix(word_table_matrix, nrow = 3)))
+  setnames(word_table, 1:3, c("image", "soa", "words"))
+}
+```
+
+```{r analysis actual blocks, message=FALSE, include=FALSE}
+actual_block_df <- details_df[details_df$blockcode!='practice_block' & details_df$response != 0,];
+
+experiment.data <- actual_block_df %>%
+  spread(trialcode, response) %>%
+  dplyr::select(subject, blocknum, trialnum, values.soa, values.img_file, d1, rb1, d2, rb2, d3, rb3, d4, rb4, d5, rb5, d6, rb6, d7, rb7, d8, rb8, d9, rb9, d10, rb10) %>%
+  arrange(subject, blocknum, trialnum);
+experiment.data
+```
+
+```{r build word cloud for actual experiment, warning=FALSE, message=FALSE, echo=FALSE, results = "asis"}
+uniq_imgs = unique(experiment.data$values.img_file);
+word_table_matrix <- c();
+
+for (img in uniq_imgs) {
+  img.data <- experiment.data[experiment.data$values.img_file == img,];
+
+  # par(mfrow=c(1, 2));
+  # par(mai=c(0, 0, 0, 0));
+  #
+  # im_fullpath = paste(nishimoto_images_folder, img, sep="");
+  # image_raw <- readJPEG(im_fullpath)
+  #
+  # plot(1:10, 1:10, type="n", xaxt='n', yaxt='n', bty='n', ann=FALSE);
+  # title(img, line = -2)
+  # rasterImage(image_raw,1,3,10,9);
+
+  uniq_soa = sort(unique(experiment.data$values.soa));
+  total_image_data <- nrow(unique(experiment.data[experiment.data$values.img_file == img,]))
+
+  if (total_image_data <= 10) {
+    next
+  }
+
+  soa_list <- c();
+  confidence_list <- c();
+  entropy_list <- c();
+  n <- c();
+
+  par(mfrow=c(2, 2));
+  par(mai=c(0, 0, 0, 0));
+
+  im_fullpath = paste(nishimoto_images_folder, img, sep="");
+  image_raw <- readJPEG(im_fullpath)
+
+  plot(1:5, 1:5, type="n", xaxt='n', yaxt='n', bty='n', ann=FALSE);
+  title(img, line = -1)
+  rasterImage(image_raw,1,1,4.5,4.5)
+
+  for (soa in uniq_soa) {
+    img_soa.data <- experiment.data[experiment.data$values.img_file == img &
+                                    experiment.data$values.soa == soa,];
+    number_of_data = nrow(unique(img_soa.data[,c('subject','blocknum','trialnum')]));
+    word_list = plot_word_cloud(img_soa.data, paste("SOA = ", soa, "ms (N=", number_of_data, ")"), small_word_cloud, FALSE)
+
+    if (is.null(word_list)) {
+      word_entropy = NaN
+    } else {
+      word_entropy = dim(word_list)[1]/sum(word_list[,2])
+    }
+
+    soa_confidence = gather(img_soa.data[,c("rb1","rb2","rb3","rb4","rb5","rb6","rb7","rb8","rb9","rb10")])
+    non_empty_soa_confidence = soa_confidence[!soa_confidence$value == "",]
+
+    guess_count=dim(non_empty_soa_confidence[non_empty_soa_confidence$value == "Guess",])[1]
+    maybe_count=dim(non_empty_soa_confidence[non_empty_soa_confidence$value == "Maybe",])[1]
+    confident_count=dim(non_empty_soa_confidence[non_empty_soa_confidence$value == "Confident",])[1]
+    very_confident_count=dim(non_empty_soa_confidence[non_empty_soa_confidence$value == "Very Confident",])[1]
+
+    soa_confidence_scores = ((guess_count * 1) + (maybe_count*2) + (confident_count*3) + (very_confident_count*4))/dim(non_empty_soa_confidence)[1]
+
+#    print(paste("Image: ", img, " SOA ", soa, " entropy = ", word_entropy, " confidence = ", #soa_confidence_scores, "(N=", number_of_data, ")"))
+
+    soa_list <- c(soa_list, soa)
+    confidence_list <- c(confidence_list, soa_confidence_scores)
+    entropy_list <- c(entropy_list, word_entropy)
+    n <- c(n, number_of_data)
+
+    #title(img, line = -2)
+
+    word_list = plot_word_cloud(img_soa.data, paste("SOA = ", soa, "ms (N=", number_of_data, ")"), small_word_cloud, title_offset = -1);
+    word_table_matrix <- c(word_table_matrix, c(img, soa, gsub('[\n\r]', ',', as.String(word_list))))
+  }
+
+  temp <- data.frame(soa_list, confidence_list, entropy_list, n)
+
+  p <- ggplot(temp, aes(x = soa_list))
+  p <- p + geom_line(aes(y = entropy_list, colour = "CE")) + geom_point(y = entropy_list)
+  p <- p + geom_line(aes(y = confidence_list/4, colour = "Confidence"))
+  p <- p + scale_y_continuous(sec.axis = sec_axis(~.*4, name = "Confidence")) + geom_point(y=confidence_list)
+  p <- p + scale_colour_manual(values = c("blue", "red"))
+  p <- p + labs(title=paste(img, "(N=", paste(n, collapse = ','), ")"),
+                x = "SOA (ms)", y = "CE",
+                colour = "")
+  p <- p + theme(legend.position = c(0.70, 0.9))
+
+  print(p)
+  cat("\n\n\\pagebreak\n")
+
+  word_table <- data.table(t(matrix(word_table_matrix, nrow = 3)))
+  setnames(word_table, 1:3, c("image", "soa", "words"))
+}
+```
+
