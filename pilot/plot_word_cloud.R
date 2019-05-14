@@ -11,6 +11,7 @@ plot_word_cloud <- function(data, title_text = "", size, plot_word_cloud = TRUE,
   docs <- tm_map(docs, toSpace, "/")
   docs <- tm_map(docs, toSpace, "@")
   docs <- tm_map(docs, toSpace, "\\|")
+  docs <- tm_map(docs, toSpace, "-")
   # Convert the text to lower case
   docs <- tm_map(docs, content_transformer(tolower))
   # Convert the 

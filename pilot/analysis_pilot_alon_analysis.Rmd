@@ -1,0 +1,602 @@
+---
+title: "Comparison of descriptors between pilot data and Alon's experiment"
+subtitle: "Pilot Analysis - 07 May 2019"
+geometry: left=2cm,right=2cm,top=2cm,bottom=2cm
+output:
+  pdf_document:
+    latex_engine: xelatex
+  html_document:
+    df_print: paged
+header-includes: \usepackage{xcolor}
+---
+
+## Overview
+
+This document describes the steps to analyse the descriptors between Zhao's pilot data (free-recall under fixed SOA) and Alon's experiment (no time constraint). 
+
+## Materials/Data
+
+* 20 images
+* Descriptors from Alon's 640 experiment
+* Translated descriptions of each image (4-5 participants) from Alon's experiment - ```translatedEXP5```
+* Descriptors removed list from Alon's experiment
+* Zhao's pilot data descriptors under 67, 133, 256ms
+
+
+```{r include=FALSE}
+source('embed_import_word_cloud.R')
+source('embed_import_libraries.R')
+source('embed_configuration.R')
+
+# Functions
+source('plot_word_cloud.R')
+```
+
+```{r include=FALSE}
+`%like%` <- function (x, pattern) { 
+  grepl(pattern, x, ignore.case=TRUE)
+}
+```
+
+```{r read summary df file, echo=TRUE, results='markup', include = FALSE}
+summary_df = fread(summary_file)
+summary_df = subset(summary_df, script.subjectid %in% included_v1_mturk_participants)
+glimpse(summary_df)
+```
+
+```{r read details df file, echo=TRUE, results='markup', include = FALSE}
+details_df = fread(details_file)
+details_df = subset(details_df, subject %in% included_v1_mturk_participants)
+glimpse(details_df)
+```
+
+```{r define global variables, include = FALSE}
+all_df <- data.table();
+```
+
+```{r analysis practice blocks, include = FALSE}
+practice_block_df <- details_df[blockcode=='practice_block' & response != 0,];
+
+practice.data <- practice_block_df %>%
+  spread(trialcode, response) %>%
+  .[, .(subject, blocknum, trialnum, values.soa, values.img_file, 
+        d1, rb1, d2, rb2, d3, rb3, d4, rb4, d5, rb5,
+        d6, rb6, d7, rb7, d8, rb8, d9, rb9, d10, rb10)] %>%
+  arrange(subject, blocknum, trialnum);
+practice.data <- data.table(practice.data)
+
+practice.data
+```
+
+```{r build word cloud for practice, echo=FALSE, message=TRUE, warning=FALSE}
+for (img in unique(practice.data$values.img_file)) {
+  img.data <- practice.data[values.img_file == img,];
+
+  total_image_data <- nrow(unique(img.data[img.data$values.img_file == img,]))
+
+  soa_list <- c();
+  confidence_list <- c();
+
+  # This is to filter any row which has descriptor (after d6) but no confidence
+  if (!is_empty(which(img.data$d6 != "" & img.data$rb6 == ""))) {
+    img.data <-img.data[-(which(img.data$d6 != "" & img.data$rb6 == ""))]
+  }
+  
+  if (!is_empty(which(img.data$d7 != "" & img.data$rb7 == ""))) {
+    img.data <-img.data[-(which(img.data$d7 != "" & img.data$rb7 == ""))]
+  }
+  
+  if (!is_empty(which(img.data$d8 != "" & img.data$rb8 == ""))) {
+    img.data <-img.data[-(which(img.data$d8 != "" & img.data$rb8 == ""))]
+  }
+  
+  if (!is_empty(which(img.data$d9 != "" & img.data$rb9 == ""))) {
+    img.data <-img.data[-(which(img.data$d9 != "" & img.data$rb9 == ""))]
+  }
+  
+  if (!is_empty(which(img.data$d10 != "" & img.data$rb10 == ""))) {
+    img.data <-img.data[-(which(img.data$d10 != "" & img.data$rb10 == ""))]
+  }
+  
+  # im_fullpath = paste(nishimoto_images_folder, img, sep="");
+  # image_raw <- readJPEG(im_fullpath)
+
+  for (soa in sort(unique(img.data$values.soa))) {
+    confidence_soa_img <- c()
+
+    img_soa.data <- img.data[values.img_file == img & values.soa == soa,];
+    block_trial = unique(img_soa.data[,c('blocknum','trialnum')])
+    number_of_data = nrow(block_trial);
+    
+    word_list = plot_word_cloud(img_soa.data, paste("SOA = ", soa, "ms (N=", number_of_data, ")"), small_word_cound, FALSE)
+    
+    if (is.null(word_list) | number_of_data == 0) {
+      next
+    }
+    
+    img_soa.data.long <- melt(img_soa.data, id.vars = c("subject", "blocknum","trialnum", "values.soa"),   
+         measure.vars = c("d1","d2","d3","d4","d5","d6","d7","d8","d9","d10",
+          "rb1","rb2","rb3","rb4","rb5","rb6","rb7","rb8","rb9","rb10"))
+    
+    # Code the confidence ratings (convert text to numbers)
+    img_soa.data.long[which(startsWith(as.character(img_soa.data.long$variable), "rb") & img_soa.data.long$value == 'Guess'),]$value <- 1
+    img_soa.data.long[which(startsWith(as.character(img_soa.data.long$variable), "rb") & img_soa.data.long$value == 'Maybe'),]$value <- 2
+    img_soa.data.long[which(startsWith(as.character(img_soa.data.long$variable), "rb") & img_soa.data.long$value == 'Confident'),]$value <- 3
+    img_soa.data.long[which(startsWith(as.character(img_soa.data.long$variable), "rb") & img_soa.data.long$value == 'Very Confident'),]$value <- 4
+    
+    for (a_word in word_list$word) {
+      word_conf <- img_soa.data.long[which(img_soa.data.long$value %like% a_word),.(subject, blocknum, trialnum, variable = gsub("d","rb", variable))]
+    
+      mean_words_confidence_ratings <- mean(as.numeric(
+        merge(img_soa.data.long, word_conf, by = c("subject", "blocknum", "trialnum", "variable"), all = FALSE)$value))
+      
+      # if (a_word == "glass" & soa == 267) {
+      #   print(word_conf$subject)
+      #   print(word_conf$blocknum)
+      #   print(word_conf$trialnum)
+      #   print(word_conf$variable)
+      #   
+      #   print(paste0("mean: ", mean_words_confidence_ratings))
+      # }
+      # 
+      one_row <- data.table(img, soa, word = a_word, frequency = word_list[word == a_word, c("frequency")]$frequency, confidence = mean_words_confidence_ratings)
+      all_df <- rbind(all_df, one_row)
+    }
+  }
+}
+```
+
+```{r analysis actual blocks, message=FALSE, include=TRUE, results='markup'}
+actual_block_df <- details_df[blockcode != 'practice_block' & response != 0,];
+
+experiment.data <- actual_block_df %>%
+  spread(trialcode, response) %>%
+  .[, .(subject, blocknum, trialnum, values.soa, values.img_file, 
+        d1, rb1, d2, rb2, d3, rb3, d4, rb4, d5, rb5,
+        d6, rb6, d7, rb7, d8, rb8, d9, rb9, d10, rb10)] %>%
+  arrange(subject, blocknum, trialnum);
+experiment.data <- data.table(experiment.data)
+```
+
+```{r build word cloud for actual experiment, warning=FALSE, message=FALSE, echo=FALSE, results = "asis"}
+for (img in unique(experiment.data$values.img_file)) {
+  
+  img.data <- experiment.data[values.img_file == img,];
+  total_image_data <- nrow(unique(experiment.data[values.img_file == img,]))
+
+  # This is to filter any row which has descriptor (after d6) but no confidence
+  if (!is_empty(which(experiment.data$d6 != "" & experiment.data$rb6 == ""))) {
+    experiment.data <-experiment.data[-(which(experiment.data$d6 != "" & experiment.data$rb6 == ""))]
+  }
+  
+  if (!is_empty(which(experiment.data$d7 != "" & experiment.data$rb7 == ""))) {
+    experiment.data <-experiment.data[-(which(experiment.data$d7 != "" & experiment.data$rb7 == ""))]
+  }
+  
+  if (!is_empty(which(experiment.data$d8 != "" & experiment.data$rb8 == ""))) {
+    experiment.data <-experiment.data[-(which(experiment.data$d8 != "" & experiment.data$rb8 == ""))]
+  }
+  
+  if (!is_empty(which(experiment.data$d9 != "" & experiment.data$rb9 == ""))) {
+    experiment.data <-experiment.data[-(which(experiment.data$d9 != "" & experiment.data$rb9 == ""))]
+  }
+  
+  if (!is_empty(which(experiment.data$d10 != "" & experiment.data$rb10 == ""))) {
+    experiment.data <-experiment.data[-(which(experiment.data$d10 != "" & experiment.data$rb10 == ""))]
+  }
+  
+  soa_list <- c();
+  confidence_list <- c();
+  entropy_list <- c();
+
+  # im_fullpath = paste(nishimoto_images_folder, img, sep="");
+  # image_raw <- readJPEG(im_fullpath)
+
+  for (soa in sort(unique(experiment.data$values.soa))) {
+    confidence_soa_img <- c()
+    img_soa.data <- experiment.data[values.img_file == img & values.soa == soa,];
+    block_trial = unique(img_soa.data[,c('blocknum','trialnum')])
+    number_of_data = nrow(block_trial);
+    word_list = plot_word_cloud(img_soa.data, paste("SOA = ", soa, "ms (N=", number_of_data, ")"), small_word_cound, FALSE)
+
+    if (is.null(word_list) | number_of_data == 0) {
+      next
+    }
+    
+    img_soa.data.long <- melt(img_soa.data, id.vars = c("subject", "blocknum","trialnum", "values.soa"),   
+         measure.vars = c("d1","d2","d3","d4","d5","d6","d7","d8","d9","d10",
+          "rb1","rb2","rb3","rb4","rb5","rb6","rb7","rb8","rb9","rb10"))
+    
+    # Code the confidence ratings (convert text to numbers)
+    img_soa.data.long[which(startsWith(as.character(img_soa.data.long$variable), "rb") & img_soa.data.long$value == 'Guess'),]$value <- 1
+    img_soa.data.long[which(startsWith(as.character(img_soa.data.long$variable), "rb") & img_soa.data.long$value == 'Maybe'),]$value <- 2
+    img_soa.data.long[which(startsWith(as.character(img_soa.data.long$variable), "rb") & img_soa.data.long$value == 'Confident'),]$value <- 3
+    img_soa.data.long[which(startsWith(as.character(img_soa.data.long$variable), "rb") & img_soa.data.long$value == 'Very Confident'),]$value <- 4
+    
+    for (a_word in word_list$word) {
+      word_conf <- img_soa.data.long[which(img_soa.data.long$value %like% a_word),.(subject, blocknum, trialnum, variable = gsub("d","rb", variable))]
+      
+      mean_words_confidence_ratings <- mean(as.numeric(
+        merge(img_soa.data.long, word_conf, by = c("subject", "blocknum", "trialnum", "variable"), all = FALSE)$value))
+      
+      one_row <- data.table(img, soa, word = a_word, frequency = word_list[word == a_word, c("frequency")]$frequency, confidence = mean_words_confidence_ratings)
+      all_df <- rbind(all_df, one_row)
+    }
+  }
+}
+```
+## Steps
+
+1. Combine and pre-processed Zhao's pilot data, then calculate the weighted probabilities (by mean confidence)
+1. Read Alon's descriptors and original subject descriptors and calculate the probability.
+1. Merging the probabilities of Alon's descriptors with Zhao weighted probabilities (with confidence).
+
+### Step 1: Combine and pre-processed Zhao's pilot data, then calculate the weighted probabilities (by mean confidence)
+
+The figure below shows a sample of the data after the normalised weighted probabilities were derived. 
+
+* ```probability``` of a word is the total occurrence of the word under an image per SOA.
+* ```confidence``` of a word is the average participants' confidence ratings of that word under an image per SOA.
+* $weighted\_prob = probability * confidence$
+* $norm\_weighted\_prob = (probability * confidence)/sum(weighted\_prob)$ per image per SOA.
+
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE, results='markup'}
+all_df <- all_df[, probability := frequency/sum(frequency), by = .(img, soa)]
+all_df <- all_df[, weighted_prob := probability * confidence]
+all_df <- all_df[, norm_weighted_prob := weighted_prob/sum(weighted_prob), by = .(img, soa)]
+all_df <- all_df[, img_id := as.integer(gsub("im[0]+([1-9][0-9]*).jpg", "\\1", img))]
+
+glimpse(all_df)
+```
+\hfill\break
+Now, I checked the normalised weighted probabilities sum up to 1 for each image per soa.
+
+Total unique combination of image and SOA is  
+\hfill\break
+
+```{r, warning=FALSE, message=FALSE, echo=TRUE, results='markup'}
+print(count(unique(all_df[,.(img, soa)])))
+```
+\hfill\break
+
+I expect the same if we sum up the normalised weighted probabilities.
+
+```{r, warning=FALSE, message=FALSE, echo=TRUE, results='markup'}
+prob_check_data <- all_df[, sum(norm_weighted_prob), by = .(img, soa)]
+print(sum(prob_check_data$V1))
+```
+\hfill\break
+
+Table below shows the top words for each image/soa that have the highest normalised weighted probability.
+\hfill\break
+```{r, warning=FALSE, message=FALSE, echo=TRUE, results='markup'}
+max_prob_by_img_soa <- all_df[, max(norm_weighted_prob) , by = .(img, soa)]
+setnames(max_prob_by_img_soa, c("img", "soa", "norm_weighted_prob"))
+head(merge(all_df[,.(img, soa, word, norm_weighted_prob)], max_prob_by_img_soa, all = FALSE), 11)
+```
+
+### Step 2: Read Alon's descriptors and original subject descriptors and calculate the probability
+
+* Source:
+  * Alon's filtered descriptors
+  * Alon's original translated descriptions from Shinji's (with max 5 translations per image)
+
+```{r merge with alon data, warning=FALSE, message=FALSE, echo=FALSE, include=FALSE}
+alon_img_present_dt = fread(alon_present_words)
+alon_img_descriptions_dt = fread(alon_subject_descriptions)
+
+setnames(alon_img_descriptions_dt, c("img_id", "desc1", "desc2", "desc3", "desc4", "desc5"))
+
+alon_filtered_img_present_dt = alon_img_present_dt[image_id %in% unique(all_df$img_id)]
+alon_img_words <- separate_rows(alon_filtered_img_present_dt, present_words, convert = TRUE) %>%
+  setnames(c("img_id", "word"))
+
+alon_img_desc = data.table();
+
+for (row_id in 1:nrow(alon_img_words)) {
+  row <- alon_img_words[row_id, ]
+  
+  desc_row <- alon_img_descriptions_dt[img_id == row$img_id, ]
+  expr <- paste("/ ", row$word, " | ",row$word, "|", row$word, " |", "^", row$word, "|", row$word, "$", "/", sep = "")
+  sum <- 0
+  
+  for (desc in c(desc_row$desc1, desc_row$desc2, desc_row$desc3, desc_row$desc4, desc_row$desc5)) {
+    pos <- gregexpr(expr, desc, ignore.case = TRUE)
+    if (pos[[1]][1] != -1) {
+      sum <- sum + 1
+    }
+  }
+  
+  r <- data.table(row$img_id, row$word, sum)
+  alon_img_desc <- rbind(alon_img_desc, r)
+}
+
+setnames(alon_img_desc, c("img_id", "word", "frequency"))
+alon_img_desc <- alon_img_desc[, probability := frequency/sum(frequency), by = img_id]
+```
+
+In Alon's dataset,
+
+* ```frequency``` represents the number of occurrence of a word among the 4-5 translated image descriptions.
+* ```probability``` is the normalised probability, i.e. $frequency/sum(frequency)$ - Sum of this column per image should be equals to 1.
+```{r, warning=FALSE, echo = FALSE, results='markup'}
+glimpse(alon_img_desc)
+```
+
+\hfill\break
+Number of unique images:
+```{r, warning=FALSE, echo = TRUE, results='markup'}
+length(unique(alon_img_desc[, img_id]))
+```
+
+\hfill\break
+I expect the sum of probabilities per image is 1, in another words, the sum of all probabilities should be equal to the number of unique images.
+```{r, warning=FALSE, echo = TRUE, results='markup'}
+sum(alon_img_desc[, sum(probability), by=img_id]$V1)
+```
+
+#### Removed words
+
+The following words are in Alon's descriptors but unable to find in the translated descriptions, and also they are not part of the removed words.
+
+```{r there are some words have 0 frequencies due to remove words, warning=FALSE, results='markup'}
+alon_remove_words_dt = fread(alon_remove_words)
+alon_remove_words_list = unique(gsub("'", "", alon_remove_words_dt[,1]$V1))
+
+not_removed_words_zero_freq <- alon_img_desc[frequency == 0][!word %in% alon_remove_words_list,]
+print(not_removed_words_zero_freq)
+
+alon_img_desc <- alon_img_desc[frequency != 0]
+```
+\hfill\break
+I will remove all words that have zero frequency.
+
+Here is a histogram that shows the number of word frequencies for Alon's descriptors in the images used in pilot.
+
+Most of the descriptors used only once - among 4-5 descriptions. These could reflect the 2-rater words and 4-rater words that Alon used in the experiment.
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE, fig.show = 'asis', fig.align='left', results='markup'}
+# Frequency table
+alon_img_desc[, .(total = .N, percentage = (.N/nrow(alon_img_desc))*100), by=c("frequency")]
+
+# Plot a distribution of words aggrements
+ggplot(alon_img_desc, title="Frequency of each descriptor in 23 pilot images") + 
+  geom_histogram(aes(x = frequency)) + 
+  xlab("Frequency of word")
+
+```
+
+### Step 3: Merging the probabilities of Alon's descriptors with Zhao weighted probabilities (with confidence).
+
+In this step, I merged the pilot dataset with Alon's in order to construct the word matrix with different SOAs.
+
+In this data table:
+
+* ```p_67``` is the probability (not normalised) for a word under SOA 67ms
+* ```nwp_67``` is the normalised weighted probability for a word under SOA 67ms
+* ```p_133``` is the probability (not normalised) for a word under SOA 133ms
+* ```prob``` is the normalised probability from Alon's descriptors (no time limit)
+
+```{r , warning=FALSE, message=FALSE, warning=FALSE, message=FALSE, echo=FALSE, results='markup'}
+zhao_img_words_67 <- all_df[soa == 67, .(img_id, word, probability, norm_weighted_prob)]
+zhao_img_words_133 <- all_df[soa == 133, .(img_id, word, probability, norm_weighted_prob)]
+zhao_img_words_267 <- all_df[soa == 267, .(img_id, word, probability, norm_weighted_prob)]
+
+summary_table <- merge(zhao_img_words_67, zhao_img_words_133, by = c("img_id", "word"), all = TRUE) %>%
+  setnames(c("img_id", "word", "p_67", "nwp_67", "p_133", "nwp_133")) %>%
+  merge(zhao_img_words_267, by = c("img_id", "word"), all = TRUE) %>%
+  setnames(c("img_id", "word", "p_67", "nwp_67", "p_133", "nwp_133", "p_267", "nwp_267")) %>%
+  merge(alon_img_desc[, c("img_id", "word", "probability")], by = c("img_id", "word"), all = TRUE) %>%
+  setnames(c("img_id", "word", "p_67", "nwp_67", "p_133", "nwp_133", "p_267", "nwp_267", "prob")) %>%
+  .[order(img_id, prob, word)]
+
+glimpse(summary_table)
+```
+
+## Results
+
+### Constructing KL Divergence Matrix
+
+For the pilot data (67, 133, 267ms SOAs) and Alon's (Unlimited), I calculated the *pairwise* KL Divergence (using the normalised probabilities) and constructed a KL matrix.
+
+The actual KL divergence (log2) is calculated using the following command:
+```
+KLMatrix[row, col] <- KL(rbind(prob[row,], prob[col,]), test.na = FALSE, unit="log2") # measure in bits
+```
+
+Note that KL divergence value is not symmetrical, i.e. $KL(P, Q)\ not\ equals\ to\ KL(Q, P)$.
+
+### Aggregate the common words between two SOAs
+
+Besides the KL Divergence Matrix, I have aggregated the common-word table that contains the columns:
+
+* ```all_soas_alon``` - These are the words that are common between all SOAs in the pilot and Alon.
+* ```all_soas``` - These are the words that are common between all SOAs in the pilot only.
+* ```67_alon``` - These are the words that are common between 67ms in the pilot and Alon.
+* ```133_alon``` - These are the words that are common between 133ms in the pilot and Alon.
+* ```267_alon``` - These are the words that are common between 267ms in the pilot and Alon.
+
+\hfill\break
+
+```{r warning=FALSE, message = FALSE, results="asis", fig.show = 'asis'}
+print_common_words <- function(comb_table, img) {
+  common_words_all_soas = comb_table[!is.na(p_67) & !is.na(p_133) & !is.na(p_267) & prob > 0]
+  common_words_zhao_all_soas = comb_table[!is.na(p_67) & !is.na(p_133) & !is.na(p_267)]
+  common_words_67_alon = comb_table[!is.na(p_67) & prob > 0]
+  common_words_133_alon = comb_table[!is.na(p_133) & prob > 0]
+  common_words_267_alon = comb_table[!is.na(p_267) & prob > 0]
+  
+  max_rows = max(
+    dim(common_words_all_soas)[1], 
+    dim(common_words_zhao_all_soas)[1], 
+    dim(common_words_67_alon)[1], 
+    dim(common_words_133_alon)[1], 
+    dim(common_words_267_alon)[1]
+  )
+
+  words_table <- data.table(
+    array(common_words_all_soas$word) %>% sort %>% append(array(NA, max_rows - length(common_words_all_soas$word))),
+    array(common_words_zhao_all_soas$word)%>% sort %>% append(array(NA, max_rows - length(common_words_zhao_all_soas$word))),
+    array(common_words_67_alon$word) %>% sort %>% append(array(NA, max_rows - length(common_words_67_alon$word))),
+    array(common_words_133_alon$word) %>% sort %>% append(array(NA, max_rows - length(common_words_133_alon$word))),
+    array(common_words_267_alon$word) %>% sort %>% append(array(NA, max_rows - length(common_words_267_alon$word)))
+  )
+  
+  words_table[is.na(words_table)] <- "-"
+  
+  #setnames(words_table, c("all_soas_alon", "all_soas", "67_alon", "133_alon", "267_alon"))
+  
+  # words_table %>%
+  #   kable(format = "latex", booktabs = T) %>%
+  #   kable_styling(bootstrap_options = c("striped"), position = "left")
+
+  setnames(words_table, c("all_soas_alon", "all_soas", "67_alon", "133_alon", "267_alon"))
+
+  words_table %>%  
+    kable(format = "latex", booktabs = T) %>%
+    kable_styling(bootstrap_options = c("striped"))
+  
+}
+```
+
+```{r warning=FALSE, message = FALSE, results="asis", fig.show = 'asis'}
+plot_KL_divergence <- function(comb_table, img) {
+  comb_table$word <- iconv(comb_table$word, from = "UTF-8", to = "ASCII", sub = "")
+  prob <- rbind(comb_table$nwp_67, comb_table$nwp_133, comb_table$nwp_267, comb_table$prob)
+  prob[is.na(prob)] <- 0
+  
+  KLMatrix = matrix(, dim(prob)[1], dim(prob)[1], dimnames = list(c("67ms", "133ms", "267ms", "Unlimited"), c("67ms", "133ms", "267ms", "Unlimited")))
+  
+  for (row in c(1:nrow(KLMatrix))) {
+    for (col in c(1:ncol(KLMatrix))) {
+      KLMatrix[row, col] <- KL(rbind(prob[row,], prob[col,]), test.na = FALSE, unit="log2") # measure in bits
+    }
+  }
+  
+  # Swap row and col so the confusion matrix shows y as rows
+  KLMatrix <- t(KLMatrix)
+  
+  KL_df <- as.data.table(melt(KLMatrix))
+  p <- ggplot(KL_df, aes(x = Var1, y = Var2)) +
+    ggtitle("KL Divergence Matrix for Image " + as.String(img)) +
+    theme(axis.title = element_blank(), line = element_blank(), axis.text = element_text(face = "bold")) +
+    geom_tile(aes(fill = value), colour = "steelblue") +
+    scale_fill_gradient(low = "white", high="steelblue")
+
+  im_fullpath = paste(nishimoto_images_folder, paste0("im", sprintf("%07d", img), ".jpg"), sep="");
+  image_raw <- readJPEG(im_fullpath)
+  image <- image_read(image_raw)
+
+  img_p <- qplot(1:8, 1:8, geom="blank") +
+    theme(axis.title = element_blank(), line = element_blank(),
+          axis.ticks = element_blank(), axis.line = element_blank(),
+          axis.text = element_blank()) +
+    annotation_custom(rasterGrob(image_scale(image, "200"), interpolate = TRUE))
+
+  figure <- ggarrange(p, img_p, ncol =1, nrow = 2, heights = c(0.7, 0.3))
+  print(figure)
+  
+  return(KL_df)
+}
+```
+
+```{r warning=FALSE, message = FALSE, results="asis", fig.show = 'asis'}
+plot_image_result <- function(summary_table, img) {
+  comb_table <- summary_table[img_id == img]
+  
+  KL_Matrix <- plot_KL_divergence(comb_table, img)
+
+  print_common_words(comb_table, img)
+  
+  return (KL_Matrix)
+}
+
+plot_image_result_no_return <- function(summary_table, img) {
+  comb_table <- summary_table[img_id == img]
+  
+  plot_KL_divergence(comb_table, img)
+  print_common_words(comb_table, img)
+}
+```
+
+```{r warning=FALSE, message = FALSE, include = FALSE, results="none", fig.show = 'none'}
+
+#img_list = unique(summary_table$img_id)
+kl <- plot_image_result(summary_table, 3)[, `:=`("img" = 3)]
+kl <- merge(kl, plot_image_result(summary_table, 9)[, `:=`("img" = 9L)], all = TRUE)
+kl <- merge(kl, plot_image_result(summary_table, 14)[, `:=`("img" = 14)], all = TRUE)
+kl <- merge(kl, plot_image_result(summary_table, 104)[, `:=`("img" = 104)], all = TRUE)
+kl <- merge(kl, plot_image_result(summary_table, 277)[, `:=`("img" = 277)], all = TRUE)
+kl <- merge(kl, plot_image_result(summary_table, 321)[, `:=`("img" = 321)], all = TRUE)
+kl <- merge(kl, plot_image_result(summary_table, 570)[, `:=`("img" = 570)], all = TRUE)
+kl <- merge(kl, plot_image_result(summary_table, 774)[, `:=`("img" = 774)], all = TRUE)
+kl <- merge(kl, plot_image_result(summary_table, 1078)[, `:=`("img" = 1078)], all = TRUE)
+kl <- merge(kl, plot_image_result(summary_table, 1445)[, `:=`("img" = 1445)], all = TRUE)
+kl <- merge(kl, plot_image_result(summary_table, 1684)[, `:=`("img" = 1684)], all = TRUE)
+kl <- merge(kl, plot_image_result(summary_table, 1715)[, `:=`("img" = 1715)], all = TRUE)
+kl <- merge(kl, plot_image_result(summary_table, 1758)[, `:=`("img" = 1758)], all = TRUE)
+kl <- merge(kl, plot_image_result(summary_table, 2033)[, `:=`("img" = 2033)], all = TRUE)
+kl <- merge(kl, plot_image_result(summary_table, 2164)[, `:=`("img" = 2164)], all = TRUE)
+kl <- merge(kl, plot_image_result(summary_table, 2537)[, `:=`("img" = 2537)], all = TRUE)
+kl <- merge(kl, plot_image_result(summary_table, 2667)[, `:=`("img" = 2667)], all = TRUE)
+kl <- merge(kl, plot_image_result(summary_table, 2769)[, `:=`("img" = 2769)], all = TRUE)
+kl <- merge(kl, plot_image_result(summary_table, 3279)[, `:=`("img" = 3279)], all = TRUE)
+kl <- merge(kl, plot_image_result(summary_table, 6806)[, `:=`("img" = 6806)], all = TRUE)
+kl <- merge(kl, plot_image_result(summary_table, 7360)[, `:=`("img" = 7360)], all = TRUE)
+kl <- merge(kl, plot_image_result(summary_table, 8858)[, `:=`("img" = 8858)], all = TRUE)
+kl <- merge(kl, plot_image_result(summary_table, 8876)[, `:=`("img" = 8876)], all = TRUE)
+
+kl <- kl[Var1 != Var2]
+kl <- kl[, `:=`(factor = paste0(Var1, '-', Var2))][order(factor)]
+```
+\hfill\break
+
+#### Summary Statistics
+
+A violin plot showing the mean KL divergence values across 23 images above.
+
+```{r warning=FALSE, message = FALSE, results="asis", fig.show = 'asis'}
+ggplot(kl, aes(x = factor, y = value, color = img)) +   geom_violin(trim = FALSE) + 
+  ggtitle("KL Divergence Values across SOAs (N=23 images)") +
+  geom_jitter(shape=16, position=position_jitter(0)) + 
+  stat_summary(fun.data=mean_sdl, mult=1, geom="pointrange", color="red") +
+  xlab("Group") +
+  ylab("KL Divergence (log2)") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), legend.position = "none") 
+# +
+#   geom_line(aes(group = img), color='grey')
+# + 
+#   geom_line(aes(group = img), color='black')
+
+#}
+```
+
+### Results by Image
+
+```{r warning=FALSE, message = FALSE, results="asis", fig.show = 'asis'}
+
+#img_list = unique(summary_table$img_id)
+plot_image_result_no_return(summary_table, 3)
+plot_image_result_no_return(summary_table, 9)
+plot_image_result_no_return(summary_table, 14)
+plot_image_result_no_return(summary_table, 104)
+plot_image_result_no_return(summary_table, 277)
+plot_image_result_no_return(summary_table, 321)
+plot_image_result_no_return(summary_table, 570)
+plot_image_result_no_return(summary_table, 774)
+plot_image_result_no_return(summary_table, 1078)
+plot_image_result_no_return(summary_table, 1445)
+plot_image_result_no_return(summary_table, 1684)
+plot_image_result_no_return(summary_table, 1715)
+plot_image_result_no_return(summary_table, 1758)
+plot_image_result_no_return(summary_table, 2033)
+plot_image_result_no_return(summary_table, 2164)
+plot_image_result_no_return(summary_table, 2537)
+plot_image_result_no_return(summary_table, 2667)
+plot_image_result_no_return(summary_table, 2769)
+plot_image_result_no_return(summary_table, 3279)
+plot_image_result_no_return(summary_table, 6806)
+plot_image_result_no_return(summary_table, 7360)
+plot_image_result_no_return(summary_table, 8858)
+plot_image_result_no_return(summary_table, 8876)

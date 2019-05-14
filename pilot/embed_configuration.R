@@ -2,6 +2,11 @@
 summary_file = '../../data/pilot/v0_all/gist_imgset1_summary_all.csv'
 details_file = '../../data/pilot/v0_all/gist_imgset1_raw_all.csv'
 
+alon_present_words = '../analysis-data/alon_image_present_words.csv'
+alon_remove_words = '../analysis-data/removeWordsEXP5.csv'
+alon_subject_descriptions = '../analysis-data/translatedEXP5.csv'
+
+
 # This is the first lab participant experiments (4 blocks, 20 trials in each block)
 included_v0_lab_participants = c(
   10, 13, 16
