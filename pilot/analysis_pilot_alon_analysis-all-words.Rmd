@@ -1,0 +1,169 @@
+---
+title: "Comparison of descriptors between pilot data and Alon's experiment (V1)"
+subtitle: "Pilot Analysis - `r format(Sys.time(), '%d %B, %Y')`"
+geometry: left=2cm,right=2cm,top=2cm,bottom=2cm
+output:
+  pdf_document:
+    latex_engine: xelatex
+  html_document:
+    df_print: paged
+header-includes: \usepackage{xcolor}
+---
+
+```{r include=FALSE}
+source('embed_import_libraries.R')
+source('embed_configuration.R')
+
+# Functions
+source('function-load_alon_descriptors.R')
+source('function-load_pilot_data.R')
+source('function-plot_image_result.R')
+source('function-plot_KL_divergence.R')
+source('function-plot_word_cloud.R')
+source('function-print_common_words.R')
+```
+
+```{r read-summary-df-file, echo=FALSE, message=FALSE, include = FALSE, warning=FALSE}
+# included_participants <- c(included_v0_lab_participants, included_v1_mturk_participants)
+# full_raw_df <- load_pilot_data(summary_file, details_file, included_all_participants, by_subject = TRUE)
+# full_df <- copy(full_raw_df) # This will be manipulated by reference so reassign to another variable.
+# all_df <- unique(full_df[, `:=`(frequency = sum(frequency), confidence = mean(confidence)),
+#                   by = c("img", "soa", "word", "img_id")][,-c("subject")])
+
+# Use test_df below to sanity check/cross-check all_df - assert(test_df == all_df)
+#test_df <- load_pilot_data(summary_file, details_file, included_all_participants, by_subject = FALSE)
+```
+
+```{r merge-alon-data, warning=FALSE, message=FALSE, echo=FALSE, include=FALSE}
+# alon_img_desc <- load_alon_descriptors(alon_present_words, alon_subject_descriptions, alon_remove_words)
+# alon_img_desc[, `:=`("soa" = "Unlimited")]
+# 
+# save(included_participants, full_raw_df, full_df, all_df, alon_img_desc, file="pilot_all.RData")
+#alon_img_desc <- alon_img_desc[frequency > 1]
+```
+
+```{r load-variables-from-file-instead}
+load(file = 'pilot_all.RData')
+```
+
+## Experiment Configuration Details
+```{r print out configuration details for report, echo = FALSE, message=TRUE}
+print(paste0("Summary file processed: ", summary_file))
+print(paste0("Details file processed: ", details_file))
+print(paste0("Included participants: (N=", length(included_participants), ")"))
+```
+```{r plot-kl-function, warning=FALSE, message=FALSE, echo = FALSE}
+plot_KL <- function(aggregate_result, imgid, soa1, soa2) {
+   
+  t1_wide <- aggregate_result$t1_wide
+  t1_melt <- aggregate_result$t1_melt
+  word_cols <- aggregate_result$word_cols
+  
+  soa_list <- unique(t1_wide$soa)
+  soa_index_1 <- which(soa_list == soa1)
+  soa_index_2 <- which(soa_list == soa2)
+  
+  mat_1_2 <- as.matrix(rbind(as.vector(subset(t1_wide[soa_index_1,], select=word_cols)), 
+           as.vector(subset(t1_wide[soa_index_2,], select=word_cols))))
+  mat_2_1 <- as.matrix(rbind(as.vector(subset(t1_wide[soa_index_2,], select=word_cols)), 
+           as.vector(subset(t1_wide[soa_index_1,], select=word_cols))))
+  
+  kl1 <- paste0("KL(", soa1, ",", soa2, ")=", round(KL(mat_1_2, test.na = FALSE, unit="log2"), 4))
+  kl2 <- paste0("KL(", soa2, ",", soa1, ")=",round(KL(mat_2_1, test.na = FALSE, unit="log2"), 4))
+  
+  t_1_2 <- t1_melt[soa %in% c(soa1, soa2)]
+  max_y <- max(t_1_2$value)
+  p1 <- ggplot(t_1_2, aes(x = variable, y = value, label = soa)) +
+    geom_bar(stat = 'identity', aes(fill = soa), width = .5) +
+    coord_flip() +
+    theme_bw() +
+    ggtitle(paste0("Image: ", imgid, ' - ', kl1, ', ', kl2, sep=", ")) + 
+    theme(axis.text.y = element_text(size=3), legend.position = "top") + xlab("") 
+
+  print(p1)
+  #ggsave(paste0("kl-words-", imgid, "-", soa1, "-", soa2, ".png"), plot = p1, scale = 4)
+
+  cat("\n")
+  cat("\n")
+}
+
+```
+
+
+```{r, warning=FALSE, message=TRUE, echo = FALSE}
+as.image_id <- function(imgstr) {
+  return (as.integer(gsub("im[0]+([1-9][0-9]*).jpg", "\\1", imgstr)))
+}
+
+aggregate_image_word <- function(df, alon_df, imgstr) {
+  imgid <- as.image_id(imgstr)
+  
+  all_df <- df
+  
+  t1 <- all_df[img == imgstr, c("img_id", "soa", "word", "frequency")]
+  t1 <- rbind(t1, alon_df[img_id == imgid, c("img_id", "soa", "word", "frequency")]) 
+  t1 <- t1[, `:=`(probability = frequency/sum(frequency)), by = soa]
+  
+  t1$soa <- as.factor(t1$soa)
+  t1[frequency == 1, frequency_one := TRUE]
+  t1[frequency > 1, frequency_one := FALSE]
+  
+  t1_f <- dcast(t1, formula = img_id+soa ~ word, value.var = c("frequency"))
+  t1_f[is.na(t1_f)] <- 0
+  
+  t1_wide <- dcast(t1, formula = soa ~ word, value.var = c("probability"), fill = 0)
+  p_67 = t1_wide[soa == "67"]
+  
+  word_cols <- colnames(t1_wide)
+  word_cols <- word_cols[word_cols != 'soa']
+  
+  t1_melt <- melt(t1_wide, id.vars = c("soa"), measure.vars = word_cols)
+  t1_melt <- merge(t1_melt, t1[,c("soa", "word", "frequency_one")], by.x = c("soa", "variable"), by.y = c("soa", "word"), all = TRUE)
+  t1_melt <- t1_melt[order(-value)]
+  t1_melt$variable <- factor(t1_melt$variable, levels = rev(unique(t1_melt$variable)))
+  t1_melt[frequency_one == TRUE, c("value") := value * -1]
+  
+  p <- ggplot(t1_melt, aes(x = variable, y = value, label = value)) + 
+    #geom_histogram(alpha = 0.3, position = "identity", stat = "identity") + 
+    #geom_area(alpha = 0.2, size = 1) + 
+    geom_bar(stat = 'identity', aes(fill = soa), width = .5) + 
+    ggtitle(paste0("Image: ", imgid)) + 
+    coord_flip() +
+    #scale_y_continuous(expand = c(0, 0)) +
+    theme_bw() + 
+    theme(axis.text.y = element_text(size=3), legend.position = "top") + xlab("")
+  print(p)
+  ggsave(paste0("agg-words-", imgid, ".png"), plot = p, scale = 4)
+    # Calculate entropy
+  t1_melt[, `:=`(log_value = value * log2(value))]
+  t1_melt[is.na(t1_melt)] <- 0
+    
+  cat(paste0("Entropy for Unlimited: ", round(sum(t1_melt[soa == 'Unlimited']$log_value)*-1, 4), "\n"))
+  cat(paste0("Entropy for 67ms: ", round(sum(t1_melt[soa == 67]$log_value)*-1, 4), "\n"))
+  cat(paste0("Entropy for 133ms: ", round(sum(t1_melt[soa == 133]$log_value)*-1, 4), "\n"))
+  cat(paste0("Entropy for 267ms: ", round(sum(t1_melt[soa == 267]$log_value)*-1, 4), "\n"))
+  
+  return(list("t1_wide" = t1_wide, "t1_melt"= t1_melt, "word_cols" = word_cols))
+}
+```
+
+```{r test-only, warning=TRUE, message=FALSE, echo = FALSE}
+img_list <- c("im0000003.jpg", "im0000009.jpg", "im0000014.jpg")
+
+for (i in 1:length(img_list)) {
+  img <- img_list[i]
+  img_id <- as.image_id(img)
+
+  aggregate_result <- aggregate_image_word(all_df, alon_img_desc, img)
+  plot_KL(aggregate_result, img_id, "Unlimited", "67")
+  plot_KL(aggregate_result, img_id, "Unlimited", "133")
+  plot_KL(aggregate_result, img_id, "Unlimited", "267")
+  plot_KL(aggregate_result, img_id, "67", "133")
+  plot_KL(aggregate_result, img_id, "67", "267")
+  plot_KL(aggregate_result, img_id, "133", "267")
+}
+
+```
+
+
+

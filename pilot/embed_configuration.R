@@ -45,6 +45,10 @@ included_v1_mturk_participants = c(
 # This combines all the pilot participants
 included_all_participants = c(included_v0_lab_participants, included_v0_mturk_participants, included_v1_mturk_participants)
 
+# *** THIS decides the participants to be included in the analysis (in function-load_pilot_data)
+default_included_participants <- c(included_v0_lab_participants, included_v1_mturk_participants)
+
+
 nishimoto_images_folder = "/Volumes/Spaceship/Alon_Gist/nishimoto-images/"
 
 large_word_cloud = 3
