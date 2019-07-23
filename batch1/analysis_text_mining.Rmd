@@ -1,0 +1,440 @@
+---
+title: "Analysis"
+subtitle: "Batch 1_1 (Imageset 1 Bucket 1) Analysis - `r format(Sys.time(), '%d %B, %Y')`"
+geometry: left=2cm,right=2cm,top=2cm,bottom=2cm
+output:
+  pdf_document:
+    latex_engine: xelatex
+  html_document:
+    df_print: paged
+header-includes: \usepackage{xcolor}
+---
+
+```{r include=FALSE, echo=FALSE, message=FALSE}
+source('embed_import_libraries.R')
+source('embed_configuration.R')
+
+# Functions
+source('function-analyse_plot_single_image.R')
+source('function-aggregate_word_column.R')
+source('function-compute_kl.R')
+source('function-compute_pairwise_kl.R')
+source('function-image_utilities.R')
+source('function-load_alon_descriptors.R')
+source('function-load_data.R')
+source('function-load_subject_data.R')
+source('function-plot_kl_divergence.R')
+source('function-plot_word_cloud.R')
+source('function-validate_img_soa_group_numbers.R')
+```
+
+```{r load-variables-from-file-instead, echo=FALSE}
+load(file = 'batch1_alon_all.RData')
+```
+
+
+```{r ggplot exploratory analysis, warning=TRUE, message=TRUE, echo = FALSE}
+ggtitleimg <- function(title, imgid) {
+  return(ggtitle(paste0(title, ' (Image ', imgid, ')')))
+}
+
+master_raw_df$soa <- factor(master_raw_df$soa, levels=c("67", "133", "267", "Unlimited"))
+
+# Filter to only images that we are interested (20 images in pilot + 3 practice images)
+included_img_ids = unique(master_raw_df$img_id) 
+master_raw_df <- master_raw_df[img_id %in% included_img_ids]
+
+img_soa_total_subjects <- unique(master_raw_df[, .(img_id, soa, subject)])[, .(total_subjects = .N), by = c("img_id", "soa")]
+img_soa_total_groups <- unique(master_raw_df[, .(img_id, soa, group)])[, .(total_groups = .N), by = c("img_id", "soa")]
+
+img_soa_total_non_unique_words <- master_raw_df[, .(total_words = .N), by = c("img_id", "soa")]
+img_soa_total_unique_words <- unique(master_raw_df[, .(unique_words = .N), by = c("img_id", "soa", "word")])[, .(total_unique_words = .N), by = c("img_id", "soa")]
+merge_img_soa_total_words <- merge(img_soa_total_non_unique_words, img_soa_total_unique_words, by = c("img_id", "soa"))
+
+total_subjects <- length(unique(master_raw_df$subject))
+  
+print(paste0("Total participants: ", total_subjects))
+print(paste0("Total images: ", length(included_img_ids)))
+
+sanity_check_less_group_df <- master_raw_df[soa != 'Unlimited' & !img_id %in% c(3, 9, 14), length(unique(group)), by = c("img_id", "soa")][order(img_id, soa)][V1 < 10]
+
+if (nrow(sanity_check_less_group_df) > 0) {
+  print("Image SOAs that have less than 10 subjects/groups")
+  print(sanity_check_less_group_df)
+}
+
+stopifnot(nrow(sanity_check_less_group_df) == 0)
+
+theme_set(theme_minimal() + 
+            theme(panel.grid = element_blank()))
+
+# Here we provide the stemmed version of the master_raw_df (with word column replaced by the concatenate words that consider the same)
+
+master_raw_stem_df <- cbind(master_raw_df, stem_word = stem_words(master_raw_df$word)$stem_word)
+```
+
+```{r, warning=TRUE, message=FALSE, echo = FALSE, fig.width=7, fig.height=4}
+
+## Testing tidytext
+library("tidytext")
+
+imgid <- 1023
+
+mdf <- copy(master_raw_df)
+mdf <- mdf[word != 'na' & (is.na(confidence) | (!is.na(confidence) & confidence > 0))][!img_id %in% c(3, 9, 14)][img_id == imgid] %>%
+  cbind(stem_word = stem_words(.$word)$stem_word)
+mdf <- aggregate_word_column(mdf, NULL)
+mdf$word <- mdf$agg_word
+mdf <- dplyr::select(mdf, c(-agg_word, -stem_word))
+
+confidence_mdf <- mdf[, .(avg_conf = mean(confidence)), by = c("img_id", "soa", "word")]
+
+df_67 = mdf[soa == 67]
+df_133 = mdf[soa == 133]
+df_267 = mdf[soa == 267]
+df_Unlimited = mdf[soa == "Unlimited"]
+
+soa_67_df <- data_frame(line = 1:nrow(df_67), word = df_67$word) %>%
+  # unnest_tokens(word, text) %>%
+  #anti_join(stop_words) %>%
+  left_join(confidence_mdf[soa == "67"], by = c("word")) %>%
+  dplyr::select(-c("img_id", "soa"))
+
+soa_133_df <- data_frame(line = 1:nrow(df_133), word = df_133$word) %>%
+  #unnest_tokens(word, text) %>%
+  #anti_join(stop_words) %>%
+  left_join(confidence_mdf[soa == "133"], by = c("word")) %>%
+  dplyr::select(-c("img_id", "soa"))
+
+soa_267_df <- data_frame(line = 1:nrow(df_267), word = df_267$word) %>%
+  # unnest_tokens(word, text) %>%
+  #anti_join(stop_words) %>%
+  left_join(confidence_mdf[soa == "267"], by = c("word")) %>%
+  dplyr::select(-c("img_id", "soa"))
+# 
+# soa_unlimited_df <- data_frame(line = 1:nrow(df_Unlimited), word = df_Unlimited$word) %>%
+#   # unnest_tokens(word, text) %>%
+#   anti_join(stop_words) %>%
+#   cbind(avg_conf = NA)
+
+# text_df %>%
+#   unnest_tokens(word, text) %>%
+#   anti_join(stop_words) %>%
+#   count(word, sort = TRUE) %>%
+#   filter(n > 10) %>%
+#   mutate(word = reorder(word, n)) %>%
+#   ggplot(aes(word, n)) +
+#   geom_col() +
+#   xlab(NULL) +
+#   coord_flip()
+
+library(tidyr)
+library(tidyverse)
+
+frequency <- bind_rows(mutate(soa_67_df, soa = "67"),
+                       mutate(soa_133_df, soa = "133"),
+                       mutate(soa_267_df, soa = "267"),
+                       # mutate(soa_unlimited_df, soa = "Unlimited"),
+                       ) %>%
+  #mutate(word = str_extract(word, "[a-z']+")) %>%
+  count(soa, word) %>%
+  group_by(soa) %>%
+  mutate(proportion = n / sum(n)) %>%
+  dplyr::select(-n) %>%
+  spread(soa, proportion) %>%
+  gather(soa, proportion, c("67", "133", "267"))
+  # gather(soa, proportion, c("67", "133", "267", "Unlimited"))
+
+
+frequency_w <- bind_rows(mutate(soa_67_df, soa = "67"),
+                       mutate(soa_133_df, soa = "133"),
+                       mutate(soa_267_df, soa = "267"),
+                       # mutate(soa_unlimited_df, soa = "Unlimited"),
+                       ) %>%
+  count(soa, word) %>%
+  group_by(soa) %>%
+  left_join(confidence_mdf, by = c("soa", "word")) %>%
+  dplyr::select(-c("img_id")) %>%
+  mutate(proportion = (n / sum(n)) * (avg_conf/4)) %>%
+  dplyr::select(-c("n", "avg_conf")) %>%
+  spread(soa, proportion) %>%
+  gather(soa, proportion, c("67", "133", "267"))
+  # gather(soa, proportion, c("67", "133", "267", "Unlimited"))
+
+
+library(scales)
+
+# expect a warning about rows with missing values being removed
+proportion_67 <- subset(frequency, soa == "67")
+proportion_133 <- subset(frequency, soa == "133")
+proportion_267 <- subset(frequency, soa == "267")
+# proportion_unlimited <- subset(frequency, soa == "Unlimited")
+
+proportion_w_67 <- subset(frequency_w, soa == "67")
+proportion_w_133 <- subset(frequency_w, soa == "133")
+proportion_w_267 <- subset(frequency_w, soa == "267")
+# proportion_w_unlimited <- subset(frequency_w, soa == "Unlimited")
+
+library(ggrepel)
+library(gridExtra)
+
+theme_set(theme_cowplot())
+
+plot_compare_words <- function(df1, df2, lbl1, lbl2) {
+  plt <- ggplot(df1, aes(x = df1$proportion, y = df2$proportion, color = abs(df2$proportion - df1$proportion))) +
+  geom_abline(color = "gray40", lty = 2) +
+  geom_text_repel(aes(label = word), force = 0.5) +
+  geom_jitter(alpha = 0.4, size = 2.5, width = 0.01, height = 0.01) +
+  #geom_text(aes(label = word), check_overlap = TRUE, vjust = 1.5) +
+  scale_x_log10(breaks = c(0, 0.01, 0.03, 0.05, 0.1)) +
+  scale_y_log10(breaks = c(0, 0.01, 0.03, 0.05, 0.1)) +
+  labs(y = lbl2, x = lbl1) +
+  # scale_color_gradient(limits = c(0, 0.001),
+  #                      low = "darkslategray4", high = "gray75") +
+  theme(legend.position = "none")
+
+  return(plt)
+}
+
+image <- image_scale(get_image_by_id(nishimoto_images_folder, imgid), "200")
+
+p <- ggplot() + annotation_custom(rasterGrob(image, interpolate = FALSE))  +
+  coord_cartesian(clip = 'off') +
+  theme(plot.margin = unit(c(1,3,1,1), "lines"))
+
+g_all <- grid.arrange(arrangeGrob(
+    plot_compare_words(proportion_67, proportion_267, "67", "267"), 
+    plot_compare_words(proportion_67, proportion_133, "67", "133"), 
+    plot_compare_words(proportion_133, proportion_267, "133", "267"),
+  nrow = 3), 
+  # arrangeGrob(
+  #   plot_compare_words(proportion_67, proportion_unlimited, "67", "Unlimited"), 
+  #   plot_compare_words(proportion_133, proportion_unlimited, "133", "Unlimited"), 
+  #   plot_compare_words(proportion_267, proportion_unlimited, "267", "Unlimited"), 
+  # nrow = 3),
+  p, widths=c(4, 4, 2))
+
+h <- 7
+ar <- 1.5
+ggsave(g_all, height=h, width= h*ar, filename = "test-plot-all.png")
+
+
+## Weighted frequencies
+
+g1 <- grid.arrange(arrangeGrob(
+    plot_compare_words(proportion_67, proportion_267, "67", "267"), 
+    plot_compare_words(proportion_67, proportion_133, "67", "133"), 
+    plot_compare_words(proportion_133, proportion_267, "133", "267"),
+  nrow = 3),
+  arrangeGrob(
+    plot_compare_words(proportion_w_67, proportion_w_267, "67", "267"), 
+    plot_compare_words(proportion_w_67, proportion_w_133, "67", "133"), 
+    plot_compare_words(proportion_w_133, proportion_w_267, "133", "267"), 
+  nrow = 3), p, widths=c(4, 4, 2))
+
+h <- 7
+ar <- 1.5
+ggsave(g1, height=h, width= h*ar, filename = "test-plot-all-weighted.png")
+
+cor.test(data = frequency[frequency$soa == "67", ], ~ proportion + proportion_267$proportion)
+cor.test(data = frequency[frequency$soa == "133", ], ~ proportion + proportion_267$proportion)
+
+## Sentiment analysis
+sentiment_all <- frequency %>%
+  inner_join(get_sentiments("bing"))
+
+sentiment_all$soa <- factor(sentiment_all$soa, levels = c("67", "133", "267"))
+ggplot(sentiment_all[!is.na(sentiment_all$proportion),], aes(x=sentiment, fill = soa)) +
+  geom_histogram(stat = "count", na.rm = TRUE) +
+  facet_grid(~soa)
+
+
+
+
+```
+```{r }
+  word_list <- c()
+#  soa_df <- master_raw_df[soa == 67]
+  soa_df <- master_raw_df
+  
+  for (imgid in unique(soa_df$img_id)) {
+    word_list <- c(word_list, gsub(pattern = ",", replacement = " ", toString(as.array(soa_df[img_id == imgid]$word))))
+  }
+  
+  #word_list <- word_list[grep("grass", word_list, ignore.case = T)]
+  # word_list <- word_list[1:3]
+  
+  docs <- VCorpus(VectorSource(word_list))
+
+  toSpace <- content_transformer(function (x , pattern) gsub(pattern, " ", x))
+  docs <- tm_map(docs, toSpace, "/")
+  docs <- tm_map(docs, toSpace, "@")
+  docs <- tm_map(docs, toSpace, "\\|")
+  # docs <- tm_map(docs, toSpace, "-")
+  # Convert the text to lower case
+  docs <- tm_map(docs, content_transformer(tolower))
+  # Eliminate extra white spaces
+  docs <- tm_map(docs, stripWhitespace)
+  # Remove numbers
+  docs <- tm_map(docs, removeNumbers)
+  # Remove punctuations
+  docs <- tm_map(docs, removeWords, c("nada", "nothing", "na", "none"))
+  #docs <- tm_map(docs, lemmatize_strings, language = "english")
+  
+## Top 20 words
+top_20_words <- head(soa_df[, .N, by=c("word")][order(-N)], 20)
+top_20_words
+
+```
+
+```{r }
+tdm <- TermDocumentMatrix(docs, control=list(wordLengths=c(1,Inf)))
+tdm <- removeSparseTerms(tdm, .9)
+
+word <- 'person'
+associations <- findAssocs(tdm, word, 0.5)
+associations<-as.data.frame(associations) 
+associations$terms<-row.names(associations) 
+associations$terms<-factor(associations$terms, levels=associations$terms)
+
+
+ggplot(associations, aes(y=terms)) + 
+  geom_point(aes(x=person), data=associations, size=3) + 
+  theme_minimal() +
+#  theme_gdocs() + 
+  geom_text(aes(x=person, label=person), colour="darkred",hjust=-.25,size=3) +
+  theme(text=element_text(size=10), axis.title.y=element_blank())
+```
+
+```{r }
+library(igraph) 
+refund.m<-as.matrix(tdm) 
+refund.adj<-refund.m %*% t(refund.m) 
+refund.adj<-graph.adjacency(refund.adj, weighted=TRUE, mode="undirected", diag=T)
+
+refund.adj<-simplify(refund.adj)
+
+plot.igraph(refund.adj, vertex.shape="none", vertex.label.font=6, vertex.label.color="darkred", vertex.label.cex=.8, edge.color="gray85",) 
+
+
+
+
+```
+
+```{r try pairwise_cor and draw a network of words}
+set.seed(2016)
+
+a %>%
+  filter(correlation > .15) %>%
+  graph_from_data_frame() %>%
+  ggraph(layout = "fr") +
+  geom_edge_link(aes(edge_alpha = correlation), show.legend = FALSE) +
+  geom_node_point(color = "lightblue", size = 5) +
+  geom_node_text(aes(label = name), repel = TRUE) +
+  theme_void()
+```
+
+```{r }
+library("tidytext")
+
+df <- master_raw_stem_df[confidence != 0]
+
+word_list <- c()
+for (imgid in unique(df$img_id)) {
+  word_list <- c(word_list, paste(df[img_id == imgid]$word, collapse=" "))
+}
+  
+docs <- VCorpus(VectorSource(word_list))
+
+toSpace <- content_transformer(function (x , pattern) gsub(pattern, " ", x))
+docs <- tm_map(docs, toSpace, "/")
+docs <- tm_map(docs, toSpace, "@")
+docs <- tm_map(docs, toSpace, "\\|")
+docs <- tm_map(docs, content_transformer(tolower))
+docs <- tm_map(docs, stripWhitespace)
+docs <- tm_map(docs, removeNumbers)
+#docs <- tm_map(docs, removeWords, c("nada", "nothing", "na", "none"))
+#docs <- tm_map(docs, lemmatize_strings, language = "english")
+  
+```
+
+First, we construct a "Term Document Matrix" where each row is a word and a column is an image. So the size of the matrix is 4185x570. Note the sparsity of the matrix is 99%.
+
+```{r }
+tdm <- TermDocumentMatrix(docs, control=list(wordLengths=c(1,Inf)))
+tdm
+```
+
+```{r }
+library(topicmodels)
+ap_lda <- LDA(as.DocumentTermMatrix(tdm), k = 3, control = list(seed = 1234))
+ap_lda
+
+ap_topics <- tidy(ap_lda, matrix = "beta")
+ap_topics
+
+library(ggplot2)
+library(dplyr)
+
+ap_top_terms <- ap_topics %>%
+  group_by(topic) %>%
+  top_n(10, beta) %>%
+  ungroup() %>%
+  arrange(topic, -beta)
+
+ap_top_terms %>%
+  mutate(term = reorder(term, beta)) %>%
+  ggplot(aes(term, beta, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free") +
+  coord_flip()
+
+## Greatest difference
+# beta_spread <- ap_topics %>%
+#   mutate(topic = paste0("topic", topic)) %>%
+#   spread(topic, beta) %>%
+#   filter(topic1 > .001 | topic2 > .001) %>%
+#   mutate(log_ratio = log2(topic2 / topic1))
+
+# beta_spread
+
+ap_documents <- tidy(ap_lda, matrix = "gamma")
+ap_documents
+
+all_img_ids <- unique(df$img_id)
+
+for (i in unique(ap_documents$topic)) {
+  idx <- ap_documents[(which(ap_documents$gamma> 0.90 & ap_documents$topic== i)), ]$document
+  print(paste("##### ", i))
+  
+  img_ids <- all_img_ids[as.integer(idx)]
+  print(img_ids)
+  
+  p <- ggplot(data.frame()) + geom_point() + 
+    xlim(0, 100) + ylim(0, 100) + theme_minimal() +
+    theme(axis.text = element_blank())
+  
+  posx <- 0
+  posy <- 0
+  
+  for (j in img_ids) {
+  
+    p <- p + annotation_raster(get_image_by_id(nishimoto_images_folder, j), ymin = posy, ymax=posy + 9, xmin=posx, xmax=posx + 12)
+    
+    posy <- posy + 10
+    
+    if (posx >=100) {
+      posx <- 0
+    }
+    
+    if (posy >= 100) {
+      posy <- 0
+      posx <- posx + 13
+    }
+  }
+ 
+  ggsave(paste0('test', as.String(i), '.png'))
+}
+
+```
+

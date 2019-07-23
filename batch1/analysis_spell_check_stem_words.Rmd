@@ -1,0 +1,68 @@
+---
+title: "Analysis"
+geometry: left=2cm,right=2cm,top=2cm,bottom=2cm
+output:
+  pdf_document:
+    latex_engine: xelatex
+  html_document:
+    df_print: paged
+header-includes: \usepackage{xcolor}
+---
+
+```{r include=FALSE, echo=FALSE, message=FALSE}
+source('embed_import_libraries.R')
+source('embed_configuration.R')
+
+# Functions
+#source('function-get_image_by_id.R')
+source('function-load_alon_descriptors.R')
+source('function-load_data.R')
+source('function-load_subject_data.R')
+source('function-plot_word_cloud.R')
+source('function-validate_img_soa_group_numbers.R')
+```
+
+```{r configuration, include=FALSE}
+summary_file = '../../data/batch_2/gist_batch_v1_2_4_mt_summary.csv'
+details_file = '../../data/batch_2/gist_batch_v1_2_4_mt_raw-sc.csv'
+```
+
+```{r read-summary-details-df, echo=FALSE, message=FALSE, include = FALSE, warning=FALSE}
+summary_df = fread(summary_file)
+summary_df <- subset(summary_df, values.completed == 1) # Only select completed participants
+
+details_df = fread(details_file)
+details_df = subset(details_df, subject %in% summary_df$script.subjectid)
+```
+
+```{r read-summary-details-df, echo=FALSE, message=FALSE, include = FALSE, warning=FALSE}
+details_sc_df <- copy(details_df)
+
+details_sc_df <- details_sc_df[trialcode %in% c('d1','d2','d3','d4','d5'), .(response, spell_check = hunspell_check(toupper(response))), by = c("subject", "blockcode", "trialcode", "values.img_file", "values.soa")]
+
+details_sc_suggest_df <- details_sc_df[trialcode %in% c('d1','d2','d3','d4','d5') & spell_check == FALSE, .(response, spell_check, suggestion = hunspell_suggest(response)), by = c("subject", "blockcode", "trialcode", "values.img_file", "values.soa")]
+
+details_sc_df <- merge(details_sc_df, details_sc_suggest_df, all.x = TRUE)
+details_spell_check_df <- merge(details_df, details_sc_df, all.x = TRUE, by = c("subject", "blockcode", "trialcode", "values.img_file", "values.soa"))
+
+# Change null suggestions to NA
+for (i in 1:nrow(details_spell_check_df)) {
+  suggested_words <- details_spell_check_df[i]$suggestion
+  if (is.null(suggested_words[[1]])) {
+    details_spell_check_df[i]$suggestion <- NA
+  }
+}
+
+fwrite(details_spell_check_df[order(values.img_file, subject)], paste0(details_file, '.spell-checked.csv'))
+
+exclude_words <- c("na", "-", "DONTKNOW")
+spelling_errors_df = details_spell_check_df[!response.x %in% exclude_words, .(invalid_word_rate = nrow(.SD[spell_check == FALSE])/.N), by = c("subject")][invalid_word_rate > 0.10]
+if (nrow(spelling_errors_df) > 0) {
+  #print(spelling_errors_df)
+  #print(details_spell_check_df[subject %in% spelling_errors_df$subject & spell_check == FALSE])
+  stopifnot(nrow(spelling_errors_df) == 0)
+}
+
+```
+
+

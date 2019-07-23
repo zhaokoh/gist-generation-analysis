@@ -1,0 +1,65 @@
+---
+title: "Descriptive Statistics"
+subtitle: "Batch 1 (Imageset 1 Bucket 1) Analysis - `r format(Sys.time(), '%d %B, %Y')`"
+geometry: left=2cm,right=2cm,top=2cm,bottom=2cm
+output:
+  pdf_document:
+    latex_engine: xelatex
+  html_document:
+    df_print: paged
+header-includes: \usepackage{xcolor}
+---
+
+```{r include=FALSE, echo=FALSE, message=FALSE}
+source('embed_import_libraries.R')
+source('embed_configuration.R')
+
+# Functions
+#source('function-get_image_by_id.R')
+source('function-load_alon_descriptors.R')
+source('function-load_data.R')
+source('function-load_subject_data.R')
+source('function-plot_word_cloud.R')
+source('function-validate_img_soa_group_numbers.R')
+```
+
+```{r configuration, include=FALSE}
+summary_files = c(
+  '../../data/batch_1/gist_batch_v1_1_1_mt_summary.csv',
+  '../../data/batch_1/gist_batch_v1_1_2_mt_summary.csv',
+  '../../data/batch_1/gist_batch_v1_1_3_mt_summary.csv',
+  '../../data/batch_1/gist_batch_v1_1_4_mt_summary.csv',
+  '../../data/batch_1/gist_batch_v1_1_5_mt_summary.csv'
+)
+details_files = c(
+  '../../data/batch_1/gist_batch_v1_1_1_mt_raw-sc.csv',
+  '../../data/batch_1/gist_batch_v1_1_2_mt_raw-sc.csv',
+  '../../data/batch_1/gist_batch_v1_1_3_mt_raw-sc.csv',
+  '../../data/batch_1/gist_batch_v1_1_4_mt_raw-sc.csv',
+  '../../data/batch_1/gist_batch_v1_1_5_mt_raw-sc.csv'
+)
+
+all_summary_filename = '../../data/batch_1/gist_batch_v1_1_mt_summary_all.csv'
+all_details_filename = '../../data/batch_1/gist_batch_v1_1_mt_raw_all.csv'
+
+```
+
+```{r read-summary-details-df, echo=FALSE, message=FALSE, include = FALSE, warning=FALSE}
+all_summary_df <- data.frame()
+all_details_df <- data.frame()
+
+for (summary_file in summary_files) {
+  all_summary_df <- rbind(all_summary_df, fread(summary_file, na.strings = "NULLxx"))
+}
+
+for (detail_file in details_files) {
+  all_details_df <- rbind(all_details_df, fread(detail_file, na.strings = "NULLxx"), fill=TRUE)
+}
+
+fwrite(all_summary_df, paste0(all_summary_filename))
+fwrite(all_details_df, paste0(all_details_filename))
+
+```
+
+
+

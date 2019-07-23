@@ -38,3 +38,4 @@ rsconnect/
 # Custom
 analysis-report/*
 **/.ipynb_checkpoints/*
+analysis-output/*

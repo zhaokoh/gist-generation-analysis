@@ -1,11 +1,19 @@
 ## @knitr function-load_alon_descriptors
-load_alon_descriptors <- function(alon_present_words_filename, alon_subject_descriptions_filename, alon_remove_words_filename) {
+load_alon_descriptors <- function(
+  alon_present_words_filename, alon_subject_descriptions_filename,
+  alon_remove_words_filename, include_img_ids) {
+  
   alon_img_present_dt = fread(alon_present_words_filename)
   alon_img_descriptions_dt = fread(alon_subject_descriptions_filename)
   
   setnames(alon_img_descriptions_dt, c("img_id", "desc1", "desc2", "desc3", "desc4", "desc5"))
   
-  alon_filtered_img_present_dt = alon_img_present_dt[image_id %in% unique(all_df$img_id)]
+  if (length(include_img_ids) > 0) {
+    alon_filtered_img_present_dt = alon_img_present_dt[image_id %in% include_img_ids]
+  } else {
+    alon_filtered_img_present_dt = alon_img_present_dt
+  }
+  
   alon_img_words <- separate_rows(alon_filtered_img_present_dt, present_words, convert = TRUE) %>%
     setnames(c("img_id", "word"))
   
@@ -23,7 +31,7 @@ load_alon_descriptors <- function(alon_present_words_filename, alon_subject_desc
       desc <- all_descriptions[i]
       pos <- gregexpr(expr, desc, ignore.case = TRUE)
       if (pos[[1]][1] != -1) {
-        r <- data.table(img_id = row$img_id, soa = 'Unlimited', subject = i, word = row$word,  frequency = 1)
+        r <- data.table(img_id = row$img_id, soa = 'Unlimited', subject = as.character(i), word = row$word,  frequency = 1)
         alon_img_desc <- rbind(alon_img_desc, r)
         total_match <- total_match + 1
       }

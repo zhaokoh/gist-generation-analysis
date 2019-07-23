@@ -1,0 +1,267 @@
+---
+title: "Batch 1 (Image Set 1 Bucket 1) Analysis - 31 May 2019"
+geometry: "left=2cm,right=2cm,top=2cm,bottom=2cm"
+classoption: portraitq35 routput:
+  pdf_document:
+    latex_engine: xelatex
+  html_document:
+    df_print: paged
+header-includes: \usepackage{xcolor}
+---
+
+# Entropy (word) and confidence between images between SOA
+
+## Overview
+
+This analysis looks at how the word entropy and confidence differs between images used as stimuli. The word entropy of each image under each SOA is calculated using a simple formula (*not* concept):
+
+\begin{center}
+$Word\ Entropy = \frac{Number\ of\ unique\ words}{Total\ number\ of\ words}$
+\end{center}
+
+The confidence is calculated by averaging all the descriptors' confidence ratings provided by participants.
+
+## Experiment configuration
+
+* Materials: 20 images
+* Participants: MTurk
+* Procedures: Each participant did 1 block (20 trials), entered at least 5 descriptors out of 10.
+
+```{r include=FALSE}
+source('embed_import_word_cloud.R')
+source('embed_import_libraries.R')
+source('embed_configuration.R')
+
+# Functions
+source('plot_word_cloud.R')
+```
+
+```{r read summary df file, echo=TRUE, results='markup', include = FALSE}
+summary_df = fread(summary_file)
+summary_df = subset(summary_df, script.subjectid %in% included_v1_mturk_participants)
+glimpse(summary_df)
+```
+
+```{r read details df file, echo=TRUE, results='markup', include = FALSE}
+details_df = fread(details_file)
+details_df = subset(details_df, subject %in% included_v1_mturk_participants)
+glimpse(details_df)
+```
+
+```{r define global variables, include = FALSE}
+all_df <- data.table();
+```
+
+```{r analysis practice blocks, include = FALSE}
+practice_block_df <- details_df[blockcode=='practice_block' & response != 0,];
+
+practice.data <- practice_block_df %>%
+  spread(trialcode, response) %>%
+  .[, .(subject, blocknum, trialnum, values.soa, values.img_file, 
+        d1, rb1, d2, rb2, d3, rb3, d4, rb4, d5, rb5,
+        d6, rb6, d7, rb7, d8, rb8, d9, rb9, d10, rb10)] %>%
+  arrange(subject, blocknum, trialnum);
+practice.data <- data.table(practice.data)
+
+practice.data
+```
+
+```{r build word cloud for practice, warning=FALSE, message=TRUE, echo=FALSE, results = "asis"}
+for (img in unique(practice.data$values.img_file)) {
+  img.data <- practice.data[values.img_file == img,];
+
+  total_image_data <- nrow(unique(practice.data[practice.data$values.img_file == img,]))
+
+  soa_list <- c();
+  confidence_list <- c();
+  entropy_list <- c();
+  subject_list <- c();
+  user_confidence_list <- c()
+  
+  im_fullpath = paste(nishimoto_images_folder, img, sep="");
+  image_raw <- readJPEG(im_fullpath)
+
+  for (soa in sort(unique(practice.data$values.soa))) {
+    img_soa.data <- practice.data[values.img_file == img & values.soa == soa,];
+    word_list = plot_word_cloud(img_soa.data, paste("SOA = ", soa, "ms (N=", number_of_data, ")"), small_word_cound, FALSE)
+
+    if (is.null(word_list)) {
+      word_entropy = NaN
+    } else {
+      word_entropy = dim(word_list)[1]/sum(word_list[,2])
+    }
+
+    subject_block_trial = unique(img_soa.data[,c('subject','blocknum','trialnum')])
+    number_of_data = nrow(subject_block_trial);
+
+    for (i in 1:number_of_data) {
+      current_subject <- as.String(subject_block_trial[i, .(subject)])
+      
+      soa_list <- c(soa_list, soa)
+      entropy_list <- c(entropy_list, word_entropy)
+      
+      subject_list <- c(subject_list, current_subject)
+      
+      soa_confidence = data.table(gather(img_soa.data[
+        subject == current_subject, 
+        .(rb1, rb2, rb3, rb4, rb5, rb6, rb7, rb8, rb9, rb10)]))
+      non_empty_soa_confidence = soa_confidence[value != "",]
+  
+      guess_count=dim(non_empty_soa_confidence[value == "Guess",])[1]
+      maybe_count=dim(non_empty_soa_confidence[value == "Maybe",])[1]
+      confident_count=dim(non_empty_soa_confidence[value == "Confident",])[1]
+      very_confident_count=dim(non_empty_soa_confidence[value == "Very Confident",])[1]
+  
+      soa_confidence_scores <- ((guess_count * 1) 
+                                + (maybe_count*2) 
+                                + (confident_count*3) 
+                                + (very_confident_count*4))/dim(non_empty_soa_confidence)[1]
+
+      user_confidence_list <- c(user_confidence_list, soa_confidence_scores)
+    }
+  }
+
+  temp <- data.table(img, soa_list, user_confidence_list, entropy_list, subject_list)
+  #all_df <- rbind(all_df, temp)
+}
+```
+
+## Data Types and Sample Data
+
+The following displays a sample of the data.
+
+```{r analysis actual blocks, message=FALSE, include=TRUE, results='markup'}
+actual_block_df <- details_df[blockcode != 'practice_block' & response != 0,];
+
+experiment.data <- actual_block_df %>%
+  spread(trialcode, response) %>%
+  .[, .(subject, blocknum, trialnum, values.soa, values.img_file, 
+        d1, rb1, d2, rb2, d3, rb3, d4, rb4, d5, rb5,
+        d6, rb6, d7, rb7, d8, rb8, d9, rb9, d10, rb10)] %>%
+  arrange(subject, blocknum, trialnum);
+experiment.data <- data.table(experiment.data)
+
+str(experiment.data)
+```
+
+```{r build word cloud for actual experiment, warning=FALSE, message=FALSE, echo=FALSE, results = "asis"}
+for (img in unique(experiment.data$values.img_file)) {
+  
+  img.data <- experiment.data[values.img_file == img,];
+  total_image_data <- nrow(unique(experiment.data[values.img_file == img,]))
+
+  soa_list <- c();
+  confidence_list <- c();
+  entropy_list <- c();
+  subject_list <- c();
+  user_confidence_list <- c()
+  
+  im_fullpath = paste(nishimoto_images_folder, img, sep="");
+  image_raw <- readJPEG(im_fullpath)
+
+  for (soa in sort(unique(experiment.data$values.soa))) {
+    confidence_soa_img <- c()
+    img_soa.data <- experiment.data[values.img_file == img & values.soa == soa,];
+    subject_block_trial = unique(img_soa.data[,c('subject','blocknum','trialnum')])
+    number_of_data = nrow(subject_block_trial);
+    word_list = plot_word_cloud(img_soa.data, paste("SOA = ", soa, "ms (N=", number_of_data, ")"), small_word_cound, FALSE)
+
+    if (is.null(word_list)) {
+      word_entropy = NaN
+    } else {
+      word_entropy = dim(word_list)[1]/sum(word_list[,2])
+    }
+
+    if (number_of_data == 0) {
+      next
+    }
+    
+    for (i in 1:number_of_data) {
+      current_subject <- as.String(subject_block_trial[i, .(subject)]);
+      
+      soa_list <- c(soa_list, soa)
+      entropy_list <- c(entropy_list, word_entropy)
+      subject_list <- c(subject_list, current_subject)
+      
+      soa_confidence = data.table(gather(img_soa.data[
+        subject == current_subject, 
+        .(rb1, rb2, rb3, rb4, rb5, rb6, rb7, rb8, rb9, rb10)]))
+      non_empty_soa_confidence = soa_confidence[value != "",]
+  
+      guess_count=dim(non_empty_soa_confidence[value == "Guess",])[1]
+      maybe_count=dim(non_empty_soa_confidence[value == "Maybe",])[1]
+      confident_count=dim(non_empty_soa_confidence[value == "Confident",])[1]
+      very_confident_count=dim(non_empty_soa_confidence[value == "Very Confident",])[1]
+  
+      soa_confidence_scores <- ((guess_count * 1) 
+                                + (maybe_count*2) 
+                                + (confident_count*3) 
+                                + (very_confident_count*4))/dim(non_empty_soa_confidence)[1]
+      confidence_soa_img <- c(confidence_soa_img, soa_confidence_scores)
+      user_confidence_list <- c(user_confidence_list, soa_confidence_scores)
+    }
+    
+    for (i in 1:number_of_data) {
+      confidence_list <- c(confidence_list, mean(confidence_soa_img))
+    }
+  }
+
+  temp <- data.table(img, soa_list, user_confidence_list, entropy_list, confidence_list, subject_list)
+  all_df <- rbind(all_df, temp)
+}
+```
+
+```{r plot preparation, warning=FALSE, message=FALSE, echo=FALSE}
+setnames(all_df, 1:6, c("img", "soa", "user_confidence", "entropy", "confidence", "subject_id"))
+all_df$soa = as.factor(all_df$soa)
+
+# Recode the subject id from 1 to max
+old_new_id = data.table(new_id=rownames(data.table(unique(all_df$subject_id))), old_id=unique(all_df$subject_id))
+new_id_col = c()
+
+for (i in 1:dim(all_df)[1]) {
+  current_subject_id <- all_df[i,]$subject_id
+  new_id_col <- c(new_id_col, as.character(old_new_id[old_new_id$old_id == current_subject_id, 'new_id']))
+}
+
+all_df <- cbind(new_subject_id=new_id_col, all_df)
+theme_set(theme_gray(base_size = 8))
+```
+
+## Plots
+
+### Word entropy as a function of SOA
+
+```{r plot 1, warning=FALSE, message=FALSE, echo=FALSE, fig.show = 'asis'}
+ggplot(all_df, aes(x = soa, y = entropy, color = soa)) +   geom_violin(trim = FALSE) + 
+  geom_jitter(shape=16, position=position_jitter(0)) + 
+  stat_summary(fun.data=mean_sdl, mult=1, geom="pointrange", color="red") + geom_line(aes(group = img), color='black')
+```
+
+* In general, there is a decreasing trend with the mean entropy when the SOA increases.
+* The magnitude of the decrease (slope) seems larger from 67ms to 133ms, compared to the interval between 133ms and 267ms.
+* Some images' entropy values decrease between 67ms and 133ms, but increase again between 133ms and 267ms.
+  * \textcolor{red}{TODO Look into individual images that have these trends could be words generated are different.}
+  
+
+### Average participants+descriptors confidence ratings as a function of SOA
+
+```{r plot 2, warning=FALSE, message=FALSE, echo=FALSE, fig.show = 'asis'}
+ggplot(all_df, aes(x = soa, y = confidence, color = soa)) +   geom_violin(trim = FALSE) + 
+  geom_jitter(shape=16, position=position_jitter(0)) + 
+  stat_summary(fun.data=mean_sdl, mult=1, geom="pointrange", color="red") + geom_line(aes(group = img), color='black')
+```
+
+* In general, there is an increasing trend with the mean confidence ratings when the SOA increases.
+* The magnitude of the increase (slope) seems larger from 67ms to 133ms, compared to the interval between 133ms and 267ms.
+* Some images' confidence ratings increase between 67ms and 133ms, but decrease again between 133ms and 267ms.
+  * \textcolor{red}{TODO Look into individual images that have these trends.}
+  
+
+```{r plot 3, warning=FALSE, message=FALSE, echo=FALSE, include=FALSE}
+#ggplot(all_df, aes(x = soa, y = user_confidence, color = soa)) +   geom_violin(trim = FALSE) + 
+#  geom_jitter(shape=16, position=position_jitter(0)) + 
+#  stat_summary(fun.data=mean_sdl, mult=1, geom="pointrange", color="red") + geom_line(aes(group = subject_id), color='black')
+```
+
+

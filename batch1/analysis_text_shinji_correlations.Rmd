@@ -1,0 +1,188 @@
+---
+title: "Analysis"
+subtitle: "Text Correlation in Shinji's dataset"
+geometry: left=2cm,right=2cm,top=2cm,bottom=2cm
+output:
+  pdf_document:
+    latex_engine: xelatex
+  html_document:
+    df_print: paged
+header-includes: \usepackage{xcolor}
+---
+
+```{r include=FALSE, echo=FALSE, message=FALSE}
+source('embed_import_libraries.R')
+source('embed_configuration.R')
+
+# Functions
+source('function-analyse_plot_single_image.R')
+source('function-aggregate_word_column.R')
+source('function-compute_kl.R')
+source('function-compute_pairwise_kl.R')
+source('function-image_utilities.R')
+source('function-load_alon_descriptors.R')
+source('function-load_data.R')
+source('function-load_subject_data.R')
+source('function-plot_kl_divergence.R')
+source('function-plot_word_cloud.R')
+source('function-validate_img_soa_group_numbers.R')
+```
+## Overview
+
+This report is to calculate the correlation of the descriptors generated from Shinji's Japanese annotations. There are 570 images and 4185 descriptors (presence words).
+
+```{r load-variables-from-file-instead, echo=FALSE}
+alon_present_words_df <- data.table(fread("../analysis-data/alon_image_present_words.csv", encoding = "UTF-8"))
+
+word_list <- c()
+for (imgid in unique(alon_present_words_df$image_id)) {
+  word_list <- c(word_list, 
+                 gsub(",", " ", alon_present_words_df[image_id == imgid]$present_words))
+}
+  
+docs <- VCorpus(VectorSource(word_list))
+
+toSpace <- content_transformer(function (x , pattern) gsub(pattern, " ", x))
+docs <- tm_map(docs, toSpace, "/")
+docs <- tm_map(docs, toSpace, "@")
+docs <- tm_map(docs, toSpace, "\\|")
+docs <- tm_map(docs, content_transformer(tolower))
+docs <- tm_map(docs, stripWhitespace)
+docs <- tm_map(docs, removeNumbers)
+#docs <- tm_map(docs, removeWords, c("nada", "nothing", "na", "none"))
+#docs <- tm_map(docs, lemmatize_strings, language = "english")
+  
+```
+
+First, we construct a "Term Document Matrix" where each row is a word and a column is an image. So the size of the matrix is 4185x570. Note the sparsity of the matrix is 99%.
+
+```{r }
+# tdm <- TermDocumentMatrix(docs, control=list(wordLengths=c(1,Inf)))
+# tdm
+```
+
+Next, we calculate the pairwise correlation between between words and construct a matrix.
+
+```{r }
+#tdm <- removeSparseTerms(tdm, .9)
+# tdm_matrix <- as.matrix(tdm)
+# 
+# all_words <- tdm$dimnames$Terms
+# word_size <- length(all_words)
+# 
+# pearson_cor <- matrix(nrow = word_size, ncol = word_size)
+# spearman_cor <- matrix(nrow = word_size, ncol = word_size)
+# 
+# for (i in 1:word_size) {
+#   for (j in 1:word_size) {
+# 
+#     if (i == j) {
+#       pearson_cor[i, j] = 1
+#       spearman_cor[i, j] = 1
+#     } else if (i > j) {
+#       c1 <- tdm_matrix[all_words[i], ]
+#       c2 <- tdm_matrix[all_words[j], ]
+# 
+#       pearson_cor[i, j] = cor(c1, c2)
+#       pearson_cor[j, i] = pearson_cor[i, j]
+# 
+#       spearman_cor[i, j] = cor(c1, c2, method = "spearman")
+#       spearman_cor[j, i] = spearman_cor[i, j]
+#     }
+# 
+#     if (i %% 100 == 0 && j %% 1000 == 0) {
+#       print(sprintf("i = %d, j = %d, pearson = %.4f, spearman = %.4f", i, j, pearson_cor[i,j], spearman_cor[i, j]))
+#     }
+#   }
+# }
+# 
+# rownames(pearson_cor) <- all_words
+# colnames(pearson_cor) <- all_words
+# rownames(spearman_cor) <- all_words
+# colnames(spearman_cor) <- all_words
+# 
+# save(tdm, pearson_cor, spearman_cor, file = 'shinji_word_correlation.RData')
+```
+
+```{r }
+load("shinji_word_correlation.RData")
+```
+
+```{r }
+# partial_cor = copy(pearson_cor)
+# 
+# partial_cor[upper.tri(partial_cor)] <- NA
+# partial_cor[diag(partial_cor)] <- NA
+
+melt_shinji_word_corr <- melt(pearson_cor[lower.tri(pearson_cor)])
+melt_shinji_spearman_word_corr <- melt(spearman_cor[lower.tri(spearman_cor)])
+
+p <- ggplot(melt_shinji_word_corr, aes(x=value)) +
+    geom_histogram(aes(y = cumsum(..count..)/nrow(melt_shinji_word_corr)*100), bins = 100, color="black", fill="white") +
+    stat_bin(aes(y=cumsum(..count..)/nrow(melt_shinji_word_corr)*100),geom="line",color="red") +
+    ylab("Percentage (%)") +
+    xlab("Correlation r")
+
+q <- ggplot(melt_shinji_spearman_word_corr, aes(x=value)) +
+    geom_histogram(aes(y = cumsum(..count..)/nrow(melt_shinji_spearman_word_corr)*100), bins = 100, color="black", fill="white") +
+    stat_bin(aes(y=cumsum(..count..)/nrow(melt_shinji_spearman_word_corr)*100),geom="line",color="red") +
+    ylab("Percentage (%)") +
+    xlab("Correlation r")
+
+library(ggrepel)
+library(gridExtra)
+
+g <- grid.arrange(
+  arrangeGrob(
+    textGrob(paste0("Pearson mean(R-squared)=", sprintf("%.4f", mean(melt_shinji_word_corr$value^2)), ", median(R-squared)=", sprintf("%.4f", median(melt_shinji_word_corr$value^2)))),
+    arrangeGrob(p,
+                p + xlim(-0.05, 0.05),
+                p + xlim(0.8, 1.0),
+                nrow = 1, ncol = 3),
+    nrow = 2, ncol = 1, heights=c(1, 8)),
+  arrangeGrob(
+    textGrob(paste0("Spearman mean(R-squared)=", sprintf("%.4f", mean(melt_shinji_spearman_word_corr$value^2)), ", median(R-squared)=", sprintf("%.4f", median(melt_shinji_spearman_word_corr$value^2)))),
+    arrangeGrob(q,
+                q + xlim(-0.05, 0.05),
+                q + xlim(0.8, 1.0),
+                nrow = 1, ncol = 3, name = c("a", "b", "c")),
+    nrow = 2, ncol = 1, heights=c(1, 8))
+  )
+
+h <- 7
+ar <- 1.5
+ggsave(g, height=h, width= h*ar, filename = "shinji-word-association.png")
+
+```
+
+```{r }
+# Analyse high correlation
+
+trim_pearson_cor <- copy(pearson_cor)
+trim_pearson_cor[upper.tri(trim_pearson_cor)] <- NA
+
+word_pairs_df <- data.table(melt(trim_pearson_cor))
+colnames(word_pairs_df) <- c("word1", "word2", "corr")
+
+word_pairs_df <- word_pairs_df[!is.na(corr)]
+
+tdm_words <- tdm$dimnames$Terms
+wp_words <- unique(word_pairs_df$word1)
+
+
+## TODO Zhao Need to continue here to find out those high in correlations but not coming from the same image.
+word_pairs_df$word1_img = paste(which(as.array(tdm[as.character(word_pairs_df$word1), ]) == 1), collapse = '', sep='')
+
+  
+t<- word_pairs_df[, .(word1, word2, corr, word1_img = )]
+
+# word_pairs_df <- word_pairs_df[word1 != word2]
+# 
+# high_correlated_word_pairs_df <- word_pairs_df[abs(corr) > 0.8, ]
+
+
+```
+
+
+
+

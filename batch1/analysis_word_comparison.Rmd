@@ -1,0 +1,443 @@
+---
+title: "Analysis"
+subtitle: "Batch 1_1 (Imageset 1 Bucket 1) Analysis - `r format(Sys.time(), '%d %B, %Y')`"
+geometry: left=2cm,right=2cm,top=2cm,bottom=2cm
+output:
+  pdf_document:
+    latex_engine: xelatex
+  html_document:
+    df_print: paged
+header-includes: \usepackage{xcolor}
+---
+
+```{r include=FALSE, echo=FALSE, message=FALSE}
+source('embed_import_libraries.R')
+source('embed_configuration.R')
+
+# Functions
+source('function-analyse_plot_single_image.R')
+source('function-aggregate_word_column.R')
+source('function-compute_kl.R')
+source('function-compute_pairwise_kl.R')
+source('function-image_utilities.R')
+source('function-load_alon_descriptors.R')
+source('function-load_data.R')
+source('function-load_subject_data.R')
+source('function-plot_kl_divergence.R')
+source('function-plot_word_cloud.R')
+source('function-validate_img_soa_group_numbers.R')
+```
+
+```{r configuration, include=FALSE}
+batch_number = 'V1_2_2_MT'
+
+summary_file = '../../data/batch_2/gist_batch_v1_2_2_mt_summary.csv'
+details_file = '../../data/batch_2/gist_batch_v1_2_2_mt_raw-sc.csv'
+
+## COMBINE FILES
+# summary_file = '../../data/batch_1/gist_batch_v1_1_mt_summary_all.csv'
+# details_file = '../../data/batch_1/gist_batch_v1_1_mt_raw_all.csv'
+
+# summary_file = '../../data/batch_1/gist_batch_v1_1_2_mt_all_summary.csv'
+# details_file = '../../data/batch_1/gist_batch_v1_1_2_mt_all_raw.csv'
+# summary_file = '../../data/batch_1/gist_batch_v1_1_1_lb_all_summary.csv'
+# details_file = '../../data/batch_1/gist_batch_v1_1_1_lb_all_raw.csv'
+# summary_file = '../../data/batch_1/gist_batch_v1_1_1_lb_summary.csv'
+# details_file = '../../data/batch_1/gist_batch_v1_1_1_lb_raw.csv'
+
+saved_data_file = 'batch2_2_alon_all.RData'
+
+# saved_data_file = 'batch1_alon_all.RData'
+# saved_data_file = 'batch1_2_alon_all.RData'
+
+exp_group_number = 30
+exp_image_number = 21
+
+# exp_group_number = 30
+# exp_image_number = 21 * 5
+
+# To check whether each image + soa has at least 10 group
+# reload_from_raw_data_file = TRUE
+# save_data_file = TRUE
+# load_from_data_file = FALSE
+# apply_sanity_check = TRUE
+
+reload_from_raw_data_file = FALSE
+save_data_file = FALSE
+load_from_data_file = TRUE
+apply_sanity_check = TRUE
+```
+
+```{r read-summary-df-file, echo=FALSE, message=FALSE, include = FALSE, warning=FALSE}
+
+if (reload_from_raw_data_file) {
+  ## Perform preliminary assertion checks on the data integrity
+  summary_details_list <- validate_img_soa_group_numbers(summary_file, details_file,
+                                                         expected_group_number = exp_group_number, 
+                                                         expected_image_number = exp_image_number,
+                                                         enforce_validation = apply_sanity_check)
+  summary_df <- summary_details_list$summary
+  details_df <- summary_details_list$details
+  
+  full_raw_df <- load_data(summary_file, details_file, by_subject = TRUE)
+  full_raw_df$soa = as.factor(full_raw_df$soa)
+  full_raw_subject_df <- load_subject_data(summary_file, details_file)
+  
+  full_df <- copy(full_raw_df) # This will be manipulated by reference so reassign to another variable.
+  all_df <- unique(full_df[,-c("subject", "trialnum", "group")][, `:=`(frequency = sum(frequency), confidence = mean(confidence)), by = c("img", "soa", "word", "img_id")])
+  
+  ## DO NOT UNCOMMENT ME - (Only for assertion check) Use test_df below to sanity check/cross-check all_df - assert(test_df == all_df)
+  test_df <- load_data(summary_file, details_file, by_subject = FALSE)
+  test_df$soa <- factor(test_df$soa)
+  
+  # Assertion check - both df are the same.
+  stopifnot(all_equal(all_df, test_df))
+}
+```
+
+```{r merge-alon-data, echo=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+if (reload_from_raw_data_file) {
+  alon_img_desc <- load_alon_descriptors(alon_present_words, alon_subject_descriptions, alon_remove_words, all_df$img_id)
+  master_raw_df <- merge(full_raw_df, alon_img_desc, by = c("img_id", "soa", "subject", "word", "frequency"), all = TRUE)[,-c("img")]
+  
+  if (save_data_file) {
+    save(summary_df, details_df, full_raw_df, full_raw_subject_df, full_df, 
+         all_df, alon_img_desc, master_raw_df, file=saved_data_file)
+  }
+}
+```
+
+```{r load-variables-from-file-instead, echo=FALSE}
+if (load_from_data_file) {
+  load(file = saved_data_file)
+}
+```
+
+## Experiment Configuration Details
+```{r print out configuration details for report, echo = FALSE, message=TRUE}
+print(paste0("Summary file processed: ", summary_file))
+print(paste0("Details file processed: ", details_file))
+```
+
+```{r ggplot exploratory analysis, warning=TRUE, message=TRUE, echo = FALSE}
+ggtitleimg <- function(title, imgid) {
+  return(ggtitle(paste0(title, ' (Image ', imgid, ')')))
+}
+
+master_raw_df$soa <- factor(master_raw_df$soa, levels=c("67", "133", "267", "Unlimited"))
+
+# Filter to only images that we are interested (20 images in pilot + 3 practice images)
+included_img_ids = unique(master_raw_df$img_id) 
+master_raw_df <- master_raw_df[img_id %in% included_img_ids]
+
+img_soa_total_subjects <- unique(master_raw_df[, .(img_id, soa, subject)])[, .(total_subjects = .N), by = c("img_id", "soa")]
+img_soa_total_groups <- unique(master_raw_df[, .(img_id, soa, group)])[, .(total_groups = .N), by = c("img_id", "soa")]
+
+img_soa_total_non_unique_words <- master_raw_df[, .(total_words = .N), by = c("img_id", "soa")]
+img_soa_total_unique_words <- unique(master_raw_df[, .(unique_words = .N), by = c("img_id", "soa", "word")])[, .(total_unique_words = .N), by = c("img_id", "soa")]
+merge_img_soa_total_words <- merge(img_soa_total_non_unique_words, img_soa_total_unique_words, by = c("img_id", "soa"))
+
+total_subjects <- length(unique(master_raw_df$subject))
+  
+print(paste0("Total participants: ", total_subjects))
+print(paste0("Total images: ", length(included_img_ids)))
+
+if (apply_sanity_check) {
+  sanity_check_less_group_df <- master_raw_df[soa != 'Unlimited' & !img_id %in% c(3, 9, 14), length(unique(group)), by = c("img_id", "soa")][order(img_id, soa)][V1 < 10]
+  
+  if (nrow(sanity_check_less_group_df) > 0) {
+    print("Image SOAs that have less than 10 subjects/groups")
+    print(sanity_check_less_group_df)
+  }
+  
+  stopifnot(nrow(sanity_check_less_group_df) == 0)
+}
+
+theme_set(theme_minimal() + theme(panel.grid = element_blank()))
+
+# Here we provide the stemmed version of the master_raw_df (with word column replaced by the concatenate words that consider the same)
+
+master_raw_stem_df <- cbind(master_raw_df, stem_word = stem_words(master_raw_df$word)$stem_word)
+```
+
+## Demographic summary of participants
+
+```{r, warning=TRUE, message=FALSE, echo = FALSE}
+full_raw_subject_df$age <- str_replace(full_raw_subject_df$age, " years old", "")
+
+p1 <- ggplot(full_raw_subject_df, aes(x = sex)) +
+  geom_bar(stat = "count", fill = "grey80") +
+  xlab("Sex") +
+  ylab("")
+
+p2 <- ggplot(full_raw_subject_df, aes(x = age)) +
+  geom_bar(stat = "count", fill = "grey80") +
+  xlab("Age") +
+  ylab("")
+
+p3 <- ggplot(full_raw_subject_df, aes(x = nationality)) +
+  geom_bar(stat = "count", fill = "grey80") +
+  xlab("Nationality") +
+  ylab("")
+
+p4 <- ggplot(full_raw_subject_df, aes(x = first_language)) +
+  geom_bar(stat = "count", fill = "grey80") +
+  xlab("First Language") +
+  ylab("")
+
+p5 <- ggplot(full_raw_subject_df, aes(x = second_language)) +
+  geom_bar(stat = "count", fill = "grey80") +
+  xlab("Second Language") +
+  ylab("") +
+  theme(axis.text.x = element_text(angle = 60, hjust =1))
+
+p6 <- ggplot(full_raw_subject_df, aes(x = number_of_years_english_speaking)) +
+  geom_bar(stat = "count", fill = "grey80") +
+  xlab("# Years English Speaking") +
+  ylab("") +
+  theme(axis.text.x = element_text(size = 5, angle = 90))
+
+p_grid <- plot_grid(
+  plot_grid(p1, p2, nrow = 1, labels = c("A", "B")), 
+  plot_grid(p3, p4, nrow = 1, labels = c("C", "D")),
+  plot_grid(p5, p6, nrow = 1, labels = c("E", "F")),
+  nrow = 3)
+
+title <- ggdraw() + draw_label(paste0("[", batch_number, "] Total count of participants' demographic attributes (N=", total_subjects, ")"), fontface='bold')
+plot_grid(title, p_grid, ncol=1, rel_heights=c(0.1, 1)) # rel_heights values control title margins
+
+```
+
+```{r, }
+
+## Check for SOA estimates (variance)
+
+## TODO Zhao
+
+
+```
+
+## Total Participants, Words, Images analysis
+
+```{r, warning=TRUE, message=FALSE, echo = FALSE}
+
+## Plot: Total number of participants by SOA
+
+ggplot(img_soa_total_subjects, aes(x = factor(soa), y=total_subjects)) +
+  stat_summary(stat = "identity") +
+  #geom_jitter(width = 0.1) + 
+  xlab("SOA") +
+  ylab("Total subjects") +
+  ggtitle(paste0("[", batch_number, "] Unique participants per SOA"))
+
+#ggsave("analysis-subjects-by-soa.png")
+
+## Plot: Total number of non-unique + unique words by SOA
+
+melt_merge_img_soa_total_words <- melt(merge_img_soa_total_words, id.vars = c("img_id", "soa"), variable.name = "word_type")
+
+p <- ggplot(melt_merge_img_soa_total_words, aes(x = word_type, y=value)) +
+  geom_boxplot() +
+  #stat_unique(color = "red", show.legend = TRUE) +
+  #geom_jitter(width = 0.1) +
+  xlab("SOA") +
+  ylab("Total number of words") +
+  ggtitle(paste0("[", batch_number, "] Word count by SOA")) +
+  theme_pubclean() +
+  scale_x_discrete(labels = c("Non\nunique", "Unique")) +
+  facet_grid(~factor(soa))
+
+p
+#ggsave("analysis-word-count-by-soa.png")
+```
+
+```{r }
+## Analyse Don't Know confidence and Very Confident
+
+confidence_df <- copy(master_raw_df)
+confidence_df$soa <- as.factor(confidence_df$soa)
+confidence_df$img_id <- as.factor(confidence_df$img_id)
+confidence_df$confidence <- as.factor(confidence_df$confidence)
+
+# Combined confidence
+ggplot(confidence_df[soa != "Unlimited"], aes(x = soa, fill = confidence)) +
+  geom_histogram(stat = "count") +
+  xlab("SOA") +
+  ylab("'Confidence Ratings Count") +
+  scale_fill_grey(start = 0, end = .9, 
+                  name = "Confidence", 
+                  labels = c("Don't know", "Guess", "Maybe", "Confident", "Very Confident")) +
+  theme(axis.text = element_text(size = 12))
+
+ggplot(confidence_df[soa != "Unlimited"], aes(x = img_id, fill = confidence)) +
+  geom_histogram(stat = "count", position = "fill") +
+  xlab("Image") +
+  ylab("'Confidence Ratings Count") +
+  scale_fill_grey(start = 0, end = .9, 
+                  name = "Confidence", 
+                  labels = c("Don't know", "Guess", "Maybe", "Confident", "Very Confident")) +
+  theme(axis.text = element_text(size = 10), axis.text.x = element_text(angle = 90, vjust = 1))
+
+```
+
+
+
+
+```{r, warning=TRUE, message=FALSE, echo = FALSE}
+
+## Analysing KL Divergence (no filtering and no stemming)
+## Prepare dataset for plots later.
+
+kl_df <- copy(master_raw_df)
+kl_df <- kl_df[, .(soa_single_word_freq = sum(frequency)), by = c("img_id", "soa", "word")]
+kl_df <- kl_df[, soa_total_words := sum(soa_single_word_freq), by = c("img_id", "soa")]
+kl_df <- kl_df[, .(word_soa_proportion = soa_single_word_freq/soa_total_words), by = c("img_id", "soa", "word")]
+
+kl_proportion_stats_dt <- compute_pairwise_kl(kl_df, prob_colname = "word_soa_proportion")
+melt_kl_proportion_stats_dt <- melt(kl_proportion_stats_dt, id.vars = "img_id", variable.name = "kl_type", value.name = "kl_value")
+
+word_prop_conf_df <- copy(master_raw_df)
+word_prop_conf_df[is.na(confidence)]$confidence <- 1
+word_prop_conf_df <- word_prop_conf_df[, .(soa_single_word_freq = sum(frequency), 
+                                           soa_single_word_confidence = mean(confidence)
+                                           ), 
+                                       by = c("img_id", "soa", "word")]
+word_prop_conf_df <- word_prop_conf_df[, soa_total_words := sum(soa_single_word_freq), by = c("img_id", "soa")]
+word_prop_conf_df <- word_prop_conf_df[, soa_weighted_proportion := (soa_single_word_freq/soa_total_words)*soa_single_word_confidence, by = c("img_id", "soa", "word")]
+word_prop_conf_df <- word_prop_conf_df[, soa_total_weighted_proportion := sum(soa_weighted_proportion), by = c("img_id", "soa")]
+word_prop_conf_df <- word_prop_conf_df[, .(norm_soa_weighted_proportion = (soa_weighted_proportion/soa_total_weighted_proportion)), by = c("img_id", "soa", "word")]
+
+kl_weighted_pror_stats_dt <- compute_pairwise_kl(word_prop_conf_df, prob_colname =  "norm_soa_weighted_proportion")
+melt_kl_weighted_pror_stats_dt <- melt(kl_weighted_pror_stats_dt, id.vars = "img_id", variable.name = "kl_type", value.name = "kl_value")
+
+```
+
+```{r, warning=TRUE, message=FALSE, echo = FALSE}
+## Plot KL divergence (all images)
+
+plot_kl_divergence(melt_kl_proportion_stats_dt, paste0("[", batch_number, "] KL Divergence (Proportion) - no filter or stemming"), "proportion", batch_no = batch_number)
+plot_kl_divergence(melt_kl_weighted_pror_stats_dt, paste0("[", batch_number, "] KL Divergence (Weighted Proportion) - no filter or stemming"), "weighted", batch_no = batch_number)
+
+```
+
+```{r, warning=TRUE, message=FALSE, echo = FALSE}
+
+## Analysing KL Divergence (with filtering and stemming)
+## Prepare dataset for plots later.
+
+kl_df <- copy(master_raw_stem_df)
+kl_df <- aggregate_word_column(kl_df, c("img_id", "soa"))
+
+kl_df <- kl_df[, .(soa_single_stem_word_freq = .N), by = c("img_id", "soa", "agg_word")]
+kl_df <- kl_df[, soa_total_stem_words := sum(soa_single_stem_word_freq), by = c("img_id", "soa")]
+kl_df <- kl_df[, .(word_soa_proportion = soa_single_stem_word_freq/soa_total_stem_words), by = c("img_id", "soa", "agg_word")]
+
+kl_proportion_stem_stats_dt <- compute_pairwise_kl(kl_df, "agg_word", "word_soa_proportion")
+melt_kl_proportion_stem_stats_dt <- melt(kl_proportion_stem_stats_dt, id.vars = "img_id", variable.name = "kl_type", value.name = "kl_value")
+
+word_prop_conf_df <- copy(master_raw_stem_df)
+word_prop_conf_df <- aggregate_word_column(word_prop_conf_df, c("img_id", "soa"))
+word_prop_conf_df[is.na(confidence)]$confidence <- 1
+word_prop_conf_df <- word_prop_conf_df[, .(word = toString(unique(word)),
+                                           soa_single_stem_word_freq = sum(frequency), 
+                                           soa_single_stem_word_confidence = mean(confidence)
+                                           ), 
+                                       by = c("img_id", "soa", "agg_word")]
+word_prop_conf_df <- word_prop_conf_df[, soa_total_stem_words := sum(soa_single_stem_word_freq), by = c("img_id", "soa")]
+word_prop_conf_df <- word_prop_conf_df[, soa_weighted_proportion := (soa_single_stem_word_freq/soa_total_stem_words)*soa_single_stem_word_confidence, by = c("img_id", "soa", "agg_word")]
+word_prop_conf_df <- word_prop_conf_df[, soa_total_weighted_proportion := sum(soa_weighted_proportion), by = c("img_id", "soa")]
+word_prop_conf_df <- word_prop_conf_df[, .(norm_soa_weighted_proportion = (soa_weighted_proportion/soa_total_weighted_proportion)), by = c("img_id", "soa", "agg_word")]
+
+kl_weighted_pror_stem_stats_dt <- compute_pairwise_kl(word_prop_conf_df, "agg_word", prob_colname = "norm_soa_weighted_proportion")
+melt_kl_weighted_pror_stem_stats_dt <- melt(kl_weighted_pror_stem_stats_dt, id.vars = "img_id", variable.name = "kl_type", value.name = "kl_value")
+
+```
+
+```{r, warning=TRUE, message=FALSE, echo = FALSE}
+## Plot KL divergence (all images)
+
+plot_kl_divergence(melt_kl_proportion_stem_stats_dt, paste0("[", batch_number, "] KL Divergence (Proportion) - stemmed but no filter"), "proportion", batch_no = batch_number)
+plot_kl_divergence(melt_kl_weighted_pror_stem_stats_dt, paste0("[", batch_number, "] KL Divergence (Weighted Proportion) - stemmed but no filter"), "weighted", batch_no = batch_number)
+
+```
+
+```{r, warning=FALSE, message=FALSE, echo = TRUE}
+
+## INDIVIDUAL IMAGE GENERATION
+
+# Plot single image analysis
+theme_set(theme_minimal())
+
+#analyse_plot_single_image(master_raw_df, 9999001, )
+#analyse_single_image_kl_divergence(master_raw_df, 1744)
+
+img_stem_plt_df <- copy(master_raw_stem_df)
+img_stem_plt_df <- img_stem_plt_df[is.na(confidence) | confidence != 0]
+img_stem_plt_df <- aggregate_word_column(img_stem_plt_df, c("img_id"))
+img_stem_plt_df$word <- img_stem_plt_df$agg_word
+img_stem_plt_df <- img_stem_plt_df[, -c("agg_word", "stem_word")]
+
+analyse_plot_single_image(img_stem_plt_df, 9999002, 1)
+
+
+# for (i in unique(details_df$values.img_file)) {
+#   
+#   analyse_plot_single_image(img_stem_plt_df, get_image_id_by_filename(i), 1)
+#   # plot_word_cloud_for_image(details_df, i, 67)
+#   # plot_word_cloud_for_image(details_df, i, 133)
+#   # plot_word_cloud_for_image(details_df, i, 267)
+# }
+# 
+# #plot_word_cloud_for_image(details_df, "im0001744.jpg", 67)
+# #plot_word_cloud_for_image(details_df, "im0001744.jpg", 133)
+# #plot_word_cloud_for_image(details_df, "im0001744.jpg", 267)
+# 
+# ggplot(melt_kl_proportion_stats_dt[kl_type %in% c("kl_67_133", "kl_133_267", "kl_67_267")], aes(x = kl_value, fill = kl_type)) +
+#   geom_density(alpha = 0.4)
+# 
+# melt_kl_weighted_pror_stats_dt
+# 
+# plot(density(melt_kl_proportion_stats_dt$kl_value))
+```
+
+```{r }
+# par(mfrow=c(1,2))
+# 
+# data <- melt_kl_proportion_stats_dt[kl_type == "kl_67_Unlimited"]
+# d <- dist(data$kl_value, method = "euclidean")
+# fit <- hclust(d, method="ward")
+# plot(fit, labels = data$img_id)
+# groups <- cutree(fit, k=3)
+# 
+# cols = c('red', 'green', 'blue', "yellow", "black")
+# 
+# rect.hclust(fit, k=3, border=cols)
+# 
+# #for (i in dat[1]){for (z in i){ if (z=="1sx3.pdb"){print (z)}}}
+# 
+# cols = cols[sort(unique(groups[fit$order]), index=T)$ix]
+# 
+# den.kl_value <- density(data$kl_value)
+# plot(den.kl_value)
+# for (i in 1:length(data$kl_value)){
+#     lineat = data$kl_value[i]
+#     lineheight <- den.kl_value$y[which.min(abs(den.kl_value$x - lineat))]
+#     col = cols[groups[which(data$img_id == as.character(data[i, 'img_id']))]]
+#     lines(c(lineat, lineat), c(0, lineheight), col = col)
+# }
+
+```
+
+```{r }
+## SIDE plot
+
+# total_unique_words_per_images <- master_raw_df[!img_id %in% c(3, 9, 14)][, .(total_unique_words = length(unique(.SD$word))), by = c("img_id")]
+# total_unique_words_per_images$img_id <- as.factor(total_unique_words_per_images$img_id)
+# 
+# ggplot(data=total_unique_words_per_images) +
+#   geom_boxplot(aes(y=total_unique_words)) + 
+#   theme_minimal() +
+#   theme(axis.text.x = element_blank()) + ylab("Total Unique Words") +
+#   ggtitle(sprintf("Total images = %d, mean number of words = %.2f", nrow(total_unique_words_per_images), mean(total_unique_words_per_images$total_unique_words)))
+
+````

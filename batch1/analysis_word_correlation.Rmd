@@ -1,0 +1,466 @@
+---
+title: "Analysis - Word correlation"
+geometry: left=2cm,right=2cm,top=2cm,bottom=2cm
+output:
+  pdf_document:
+    latex_engine: xelatex
+  html_document:
+    df_print: paged
+header-includes: \usepackage{xcolor}
+---
+
+```{r include=FALSE, echo=FALSE, message=FALSE}
+source('embed_import_libraries.R')
+source('embed_configuration.R')
+
+# Functions
+source('function-analyse_plot_single_image.R')
+source('function-aggregate_word_column.R')
+source('function-compute_kl.R')
+source('function-compute_pairwise_kl.R')
+source('function-image_utilities.R')
+source('function-load_alon_descriptors.R')
+source('function-load_data.R')
+source('function-load_subject_data.R')
+source('function-plot_kl_divergence.R')
+source('function-plot_word_cloud.R')
+source('function-validate_img_soa_group_numbers.R')
+```
+
+```{r configuration, include=FALSE}
+batch_number = "MT_V_1_4"
+
+summary_file = '../../data/batch_1/gist_batch_v1_1_4_mt_summary.csv'
+details_file = '../../data/batch_1/gist_batch_v1_1_4_mt_raw.csv'
+
+# summary_file = '../../data/batch_1/gist_batch_v1_1_2_mt_all_summary.csv'
+# details_file = '../../data/batch_1/gist_batch_v1_1_2_mt_all_raw.csv'
+# summary_file = '../../data/batch_1/gist_batch_v1_1_1_lb_all_summary.csv'
+# details_file = '../../data/batch_1/gist_batch_v1_1_1_lb_all_raw.csv'
+# summary_file = '../../data/batch_1/gist_batch_v1_1_1_lb_summary.csv'
+# details_file = '../../data/batch_1/gist_batch_v1_1_1_lb_raw.csv'
+
+saved_data_file = 'batch1_4_alon_all.RData'
+# saved_data_file = 'batch1_2_alon_all.RData'
+
+# To check whether each image + soa has at least 10 group
+reload_from_raw_data_file = TRUE
+save_data_file = TRUE
+load_from_data_file = FALSE
+apply_sanity_check = TRUE
+
+```
+
+```{r read-summary-df-file, echo=FALSE, message=FALSE, include = FALSE, warning=FALSE}
+
+if (reload_from_raw_data_file) {
+  ## Perform preliminary assertion checks on the data integrity
+  summary_details_list <- validate_img_soa_group_numbers(summary_file, details_file,
+                                                         expected_group_number = 30, expected_image_number = 21,
+                                                         enforce_validation = apply_sanity_check)
+  summary_df <- summary_details_list$summary
+  details_df <- summary_details_list$details
+  
+  full_raw_df <- load_data(summary_file, details_file, by_subject = TRUE)
+  full_raw_df$soa = as.factor(full_raw_df$soa)
+  full_raw_subject_df <- load_subject_data(summary_file, details_file)
+  
+  full_df <- copy(full_raw_df) # This will be manipulated by reference so reassign to another variable.
+  all_df <- unique(full_df[,-c("subject", "trialnum", "group")][, `:=`(frequency = sum(frequency), confidence = mean(confidence)), by = c("img", "soa", "word", "img_id")])
+  
+  ## DO NOT UNCOMMENT ME - (Only for assertion check) Use test_df below to sanity check/cross-check all_df - assert(test_df == all_df)
+  test_df <- load_data(summary_file, details_file, by_subject = FALSE)
+  test_df$soa <- factor(test_df$soa)
+  
+  # Assertion check - both df are the same.
+  stopifnot(all_equal(all_df, test_df))
+}
+```
+
+```{r merge-alon-data, warning=FALSE, message=FALSE, echo=FALSE, include=FALSE}
+if (reload_from_raw_data_file) {
+  alon_img_desc <- load_alon_descriptors(alon_present_words, alon_subject_descriptions, alon_remove_words, all_df$img_id)
+  master_raw_df <- merge(full_raw_df, alon_img_desc, by = c("img_id", "soa", "subject", "word", "frequency"), all = TRUE)[,-c("img")]
+  
+  if (save_data_file) {
+    save(summary_df, details_df, full_raw_df, full_raw_subject_df, full_df, 
+         all_df, alon_img_desc, master_raw_df, file=saved_data_file)
+  }
+}
+```
+
+```{r load-variables-from-file-instead, echo=FALSE}
+if (load_from_data_file) {
+  load(file = saved_data_file)
+}
+```
+
+## Experiment Configuration Details
+```{r print out configuration details for report, echo = FALSE, message=TRUE}
+print(paste0("Summary file processed: ", summary_file))
+print(paste0("Details file processed: ", details_file))
+```
+
+```{r ggplot exploratory analysis, warning=TRUE, message=TRUE, echo = FALSE}
+ggtitleimg <- function(title, imgid) {
+  return(ggtitle(paste0(title, ' (Image ', imgid, ')')))
+}
+
+master_raw_df$soa <- factor(master_raw_df$soa, levels=c("67", "133", "267", "Unlimited"))
+
+# Filter to only images that we are interested (20 images in pilot + 3 practice images)
+included_img_ids = unique(master_raw_df$img_id) 
+# master_raw_df <- master_raw_df[img_id %in% included_img_ids]
+
+img_soa_total_subjects <- unique(master_raw_df[, .(img_id, soa, subject)])[, .(total_subjects = .N), by = c("img_id", "soa")]
+img_soa_total_groups <- unique(master_raw_df[, .(img_id, soa, group)])[, .(total_groups = .N), by = c("img_id", "soa")]
+
+img_soa_total_non_unique_words <- master_raw_df[, .(total_words = .N), by = c("img_id", "soa")]
+img_soa_total_unique_words <- unique(master_raw_df[, .(unique_words = .N), by = c("img_id", "soa", "word")])[, .(total_unique_words = .N), by = c("img_id", "soa")]
+merge_img_soa_total_words <- merge(img_soa_total_non_unique_words, img_soa_total_unique_words, by = c("img_id", "soa"))
+
+total_subjects <- length(unique(master_raw_df$subject))
+  
+print(paste0("Total participants: ", total_subjects))
+print(paste0("Total images: ", length(included_img_ids)))
+
+if (apply_sanity_check) {
+  sanity_check_less_group_df <- master_raw_df[soa != 'Unlimited' & !img_id %in% c(3, 9, 14), length(unique(group)), by = c("img_id", "soa")][order(img_id, soa)][V1 < 10]
+  
+  if (nrow(sanity_check_less_group_df) > 0) {
+    print("Image SOAs that have less than 10 subjects/groups")
+    print(sanity_check_less_group_df)
+  }
+  
+  stopifnot(nrow(sanity_check_less_group_df) == 0)
+}
+
+theme_set(theme_minimal() + 
+            theme(panel.grid = element_blank()))
+
+# Here we provide the stemmed version of the master_raw_df (with word column replaced by the concatenate words that consider the same)
+
+master_raw_stem_df <- cbind(master_raw_df, stem_word = stem_words(master_raw_df$word)$stem_word)
+```
+
+```{r }
+
+## Calculate the probability of covariate matrices using P1 method
+
+mturk_df <- master_raw_df[soa != "Unlimited"][!word %in% c("na", "none", "dontknow", "unknown")]
+
+word_img_soa_df <- mturk_df[, .(frequency = .N, unique_subject_word_soa = length(unique(subject))), by = c("word", "img_id", "soa")][order(word)]
+## Any item in the following table will contain words that were reported more than once per participant (duplicate check)
+word_img_soa_df[frequency != unique_subject_word_soa]
+
+total_subject_img_soa_df <- mturk_df[, .(total_subject = length(unique(subject))), by = c("img_id", "soa")][order(img_id)]
+word_total_df <- word_img_soa_df[, .(total = sum(frequency)), by = c("word")]
+word_total_all_df <- merge(word_img_soa_df, word_total_df, by = "word")
+word_total_all_df <- merge(word_total_all_df, total_subject_img_soa_df, by = c("img_id", "soa"))
+
+word_total_all_df$word_probability <- word_total_all_df$frequency/word_total_all_df$total
+
+## Calculate the correlation for word probability (NOT considering subject)
+word_total_wide_df <- spread(word_total_all_df[, -c("frequency", "total", "unique_subject_word_soa", "total_subject")], word, word_probability)
+word_total_wide_df[is.na(word_total_wide_df)] <- 0
+
+pearson_cor <-cor(as.matrix(word_total_wide_df[, 3:ncol(word_total_wide_df)]), method ="pearson")
+spearman_cor <-cor(as.matrix(word_total_wide_df[, 3:ncol(word_total_wide_df)]), method = "spearman")
+
+for (i in 1:nrow(pearson_cor)) {
+  for (j in 1:ncol(pearson_cor)) {
+    if (j >= i) {
+      pearson_cor[i, j] = NA
+    }
+  }
+}
+
+for (i in 1:nrow(spearman_cor)) {
+  for (j in 1:ncol(spearman_cor)) {
+    if (j >= i) {
+      spearman_cor[i, j] = NA
+    }
+  }
+}
+
+melt_p <- data.table(melt(pearson_cor))
+colnames(melt_p) <- c("word1", "word2", "corr")
+melt_p <- melt_p[!is.na(corr)]
+
+melt_s <- data.table(melt(spearman_cor))
+colnames(melt_s) <- c("word1", "word2", "corr")
+melt_s <- melt_s[!is.na(corr)]
+
+p <- ggplot(merge(melt_s_1, melt_s, by = c("word1", "word2"))) +
+  geom_density(aes(x=corr.x), color='red') +
+  geom_density(aes(x=corr.y), color='blue')
+
+ggplot(merge(melt_s_1, melt_s, by = c("word1", "word2"))) +
+  geom_density(aes(corr.y - corr.x))
+```
+
+
+
+```{r }
+
+## Calculate the probability of covariate matrices using P2 method
+
+mturk_df <- master_raw_df[soa != "Unlimited"][!word %in% c("na", "none", "dontknow", "unknown")]
+
+word_img_soa_df <- mturk_df[, .(frequency = .N, unique_subject_word_soa = length(unique(subject))), by = c("word", "img_id", "soa")][order(word)]
+## Any item in the following table will contain words that were reported more than once per participant (duplicate check)
+word_img_soa_df[frequency != unique_subject_word_soa]
+
+total_subject_img_soa_df <- mturk_df[, .(total_subject = length(unique(subject))), by = c("img_id", "soa")][order(img_id)]
+word_total_df <- word_img_soa_df[, .(total = sum(frequency)), by = c("word")]
+word_total_all_df <- merge(word_img_soa_df, word_total_df, by = "word")
+word_total_all_df <- merge(word_total_all_df, total_subject_img_soa_df, by = c("img_id", "soa"))
+
+word_total_all_df$subject_word_probability <- word_total_all_df$unique_subject_word_soa/word_total_all_df$total_subject
+
+## Calculate the correlation for word probability (NOT considering subject)
+word_total_wide_df <- spread(word_total_all_df[, -c("frequency", "total", "unique_subject_word_soa", "total_subject")], word, subject_word_probability)
+word_total_wide_df[is.na(word_total_wide_df)] <- 0
+
+pearson_cor <-cor(as.matrix(word_total_wide_df[, 3:ncol(word_total_wide_df)]), method ="pearson")
+spearman_cor <-cor(as.matrix(word_total_wide_df[, 3:ncol(word_total_wide_df)]), method = "spearman")
+
+for (i in 1:nrow(pearson_cor)) {
+  for (j in 1:ncol(pearson_cor)) {
+    if (j >= i) {
+      pearson_cor[i, j] = NA
+    }
+  }
+}
+
+for (i in 1:nrow(spearman_cor)) {
+  for (j in 1:ncol(spearman_cor)) {
+    if (j >= i) {
+      spearman_cor[i, j] = NA
+    }
+  }
+}
+
+melt_p <- data.table(melt(pearson_cor))
+colnames(melt_p) <- c("word1", "word2", "corr")
+melt_p <- melt_p[!is.na(corr)]
+
+melt_s <- data.table(melt(spearman_cor))
+colnames(melt_s) <- c("word1", "word2", "corr")
+melt_s <- melt_s[!is.na(corr)]
+
+ggplot(melt_s, aes(x=corr)) + 
+  geom_density()
+
+library(ggrepel)
+library(gridExtra)
+
+grid.arrange(arrangeGrob(
+  ggplot(melt_p, aes(x=corr)) +
+    geom_histogram(bins = 50) +
+    ggtitle(sprintf("Pearson correlation mean(r^2) = %.4f", mean(melt_p$corr^2))),
+  ggplot(melt_s, aes(x=corr)) +
+    geom_histogram(bins = 50) +
+    ggtitle(sprintf("Spearman correlation mean(r^2) = %.4f", mean(melt_s$corr^2))),
+  nrow = 2))
+
+library(RColorBrewer)
+coul = colorRampPalette(brewer.pal(5, "Spectral"))(20)
+
+pearson_cor <- cor(as.matrix(word_total_wide_df[, 3:ncol(word_total_wide_df)]), method = "pearson")
+spearman_cor <- cor(as.matrix(word_total_wide_df[, 3:ncol(word_total_wide_df)]), method = "spearman")
+
+#heatmap(pearson_cor, Colv = NA, Rowv = NA, scale = "column", col = coul, labRow = FALSE, labCol = FALSE, main = "Pearson")
+#heatmap(spearman_cor, Colv = NA, Rowv = NA, scale = "column", col = coul, labRow = FALSE, labCol = FALSE, main = "Spearman")
+```
+
+```{r }
+
+## Analyse Shinji's word set
+
+alon_img_desc <- load_alon_descriptors(alon_present_words, alon_subject_descriptions, alon_remove_words, c())
+
+word_img_soa_df <- alon_img_desc[, .(frequency = .N, unique_subject_word_soa = length(unique(subject))), by = c("word", "img_id", "soa")][order(word)]
+## Any item in the following table will contain words that were reported more than once per participant (duplicate check)
+word_img_soa_df[frequency != unique_subject_word_soa]
+
+total_subject_img_soa_df <- alon_img_desc[, .(total_subject = length(unique(subject))), by = c("img_id", "soa")][order(img_id)]
+word_total_df <- word_img_soa_df[, .(total = sum(frequency)), by = c("word")]
+word_total_all_df <- merge(word_img_soa_df, word_total_df, by = "word")
+word_total_all_df <- merge(word_total_all_df, total_subject_img_soa_df, by = c("img_id", "soa"))
+
+word_total_all_df$word_probability <- word_total_all_df$frequency/word_total_all_df$total
+#word_total_all_df$subject_word_probability <- word_total_all_df$unique_subject_word_soa/word_total_all_df$total_subject
+
+## Calculate the correlation for word probability (NOT considering subject)
+word_total_wide_df <- spread(word_total_all_df[, -c("frequency", "total", "unique_subject_word_soa", "total_subject")], word, word_probability)
+word_total_wide_df[is.na(word_total_wide_df)] <- 0
+
+## Calculate the correlation for word probability (NOT considering subject)
+word_total_wide_df <- spread(word_total_all_df[, -c("frequency", "total", "unique_subject_word_soa", "total_subject")], word, word_probability)
+word_total_wide_df[is.na(word_total_wide_df)] <- 0
+
+pearson_cor <-cor(as.matrix(word_total_wide_df[, 3:ncol(word_total_wide_df)]), method ="pearson")
+spearman_cor <-cor(as.matrix(word_total_wide_df[, 3:ncol(word_total_wide_df)]), method = "spearman")
+
+for (i in 1:nrow(pearson_cor)) {
+  for (j in 1:ncol(pearson_cor)) {
+    if (j >= i) {
+      pearson_cor[i, j] = NA
+    }
+  }
+}
+
+for (i in 1:nrow(spearman_cor)) {
+  for (j in 1:ncol(spearman_cor)) {
+    if (j >= i) {
+      spearman_cor[i, j] = NA
+    }
+  }
+}
+
+melt_p <- data.table(melt(pearson_cor))
+colnames(melt_p) <- c("word1", "word2", "corr")
+melt_p <- melt_p[!is.na(corr)]
+
+melt_s <- data.table(melt(spearman_cor))
+colnames(melt_s) <- c("word1", "word2", "corr")
+melt_s <- melt_s[!is.na(corr)]
+
+ggplot(melt_s, aes(x=corr)) + 
+  geom_density()
+
+library(ggrepel)
+library(gridExtra)
+
+p <- ggplot(melt_p, aes(x=corr)) +
+    geom_histogram(aes(y = cumsum(..count..)/nrow(melt_p)*100), bins = 100, color="black", fill="white") +
+    stat_bin(aes(y=cumsum(..count..)/nrow(melt_p)*100),geom="line",color="red") +
+    ylab("Percentage (%)") +
+    xlab("Correlation r")
+
+s <- ggplot(melt_s, aes(x=corr)) +
+    geom_histogram(aes(y = cumsum(..count..)/nrow(melt_s)*100),  bins = 100, color="black", fill="white") +
+    stat_bin(aes(y=cumsum(..count..)/nrow(melt_s)*100),geom="line",color="red") +
+    ylab("Percentage(%) ") +
+    xlab("Correlation r")
+
+g <- grid.arrange(
+  arrangeGrob(
+    textGrob(sprintf("Pearson mean(r^2) = %.4f", mean(melt_p$corr^2))),
+    arrangeGrob(p,
+                p + xlim(-0.05, 0.05),
+                p + xlim(0.9, 1.0),
+                nrow = 1, ncol = 3),
+    nrow = 2, ncol = 1, heights=c(1, 8)),
+  arrangeGrob(
+    textGrob(sprintf("Spearman mean(r^2) = %.4f", mean(melt_s$corr^2))),
+    arrangeGrob(s,
+                s + xlim(-0.05, 0.05),
+                s + xlim(0.8, 1.0),
+                nrow = 1, ncol = 3),
+    nrow = 2, ncol = 1, heights=c(1, 8)))
+
+h <- 7
+ar <- 1.5
+ggsave(g, height=h, width= h*ar, filename = "shinji-corr.png")
+
+```
+
+
+```{r }
+## Using word probability by users
+#word_total_all_df$word_probability <- word_total_all_df$frequency/word_total_all_df$total
+
+word_total_all_df$subject_word_probability <- word_total_all_df$unique_subject_word_soa/word_total_all_df$total_subject
+word_total_wide_df <- spread(word_total_all_df[, -c("frequency", "total", "unique_subject_word_soa", "total_subject", "word_probability")], word, subject_word_probability)
+word_total_wide_df[is.na(word_total_wide_df)] <- 0
+
+pearson_cor <-cor(as.matrix(word_total_wide_df[, 3:ncol(word_total_wide_df)]), method ="pearson")
+spearman_cor <-cor(as.matrix(word_total_wide_df[, 3:ncol(word_total_wide_df)]), method = "spearman")
+
+for (i in 1:nrow(pearson_cor)) {
+  for (j in 1:ncol(pearson_cor)) {
+    if (j >= i) {
+      pearson_cor[i, j] = NA
+    }
+  }
+}
+
+for (i in 1:nrow(spearman_cor)) {
+  for (j in 1:ncol(spearman_cor)) {
+    if (j >= i) {
+      spearman_cor[i, j] = NA
+    }
+  }
+}
+
+melt_p <- data.table(melt(pearson_cor))
+colnames(melt_p) <- c("word1", "word2", "corr")
+melt_p <- melt_p[!is.na(corr)]
+
+melt_s <- data.table(melt(spearman_cor))
+colnames(melt_s) <- c("word1", "word2", "corr")
+melt_s <- melt_s[!is.na(corr)]
+
+## which(colnames(word_total_wide_df) == "yellow-jacket")
+## cor(word_total_wide_df[, c(1131, 1143)])
+
+library(ggrepel)
+library(gridExtra)
+
+grid.arrange(arrangeGrob(
+  ggplot(melt_p, aes(x=corr)) +
+    geom_histogram(bins = 50) +
+    ggtitle(sprintf("Pearson correlation mean(r^2) = %.4f", mean(melt_p$corr^2))),
+  ggplot(melt_s, aes(x=corr)) +
+    geom_histogram(bins = 50) +
+    ggtitle(sprintf("Spearman correlation mean(r^2) = %.4f", mean(melt_s$corr^2))),
+  nrow = 2))
+
+# pearson_cor <- cor(as.matrix(word_total_wide_df[, 3:ncol(word_total_wide_df)]), method = "pearson")
+# spearman_cor <- cor(as.matrix(word_total_wide_df[, 3:ncol(word_total_wide_df)]), method = "spearman")
+
+#heatmap(pearson_cor, Colv = NA, Rowv = NA, scale = "column", col = coul, labRow = FALSE, labCol = FALSE, main = "Pearson")
+# heatmap(spearman_cor, Colv = NA, Rowv = NA, scale = "column", col = coul, labRow = FALSE, labCol = FALSE, main = "Spearman")
+
+```
+
+```{r }
+ggplot(word_total_all_df, aes(x=word_probability)) +
+  geom_density(color="red") +
+  geom_density(aes(x=subject_word_probability), color="blue")
+
+```
+
+```{r } 
+v1 <- as.vector(word_total_wide_df[, 3])
+v2 <- as.vector(word_total_wide_df[, 4])
+t <- data.table(cbind(v1, v2))
+colnames(t) <- c("V1", "V2")
+
+ggplot(t, aes(x = V1, y = V2)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  xlab(names(v1)) +
+  ylab(names(v2)) +
+  ggtitle(sprintf("Spearman Corr between %.4f", cor(v1, v2, method='spearman')))
+
+
+#lmer(subject_word_probability ~ soa + (1|word) + (1|img_id), word_total_all_df)
+
+```
+
+```{r }
+spearman_cor <- cor(as.matrix(word_total_wide_df[, 3:ncol(word_total_wide_df)]), method = "spearman")
+
+```
+
+
+```{r }
+selected_words_df <- master_raw_df[word %in% c('ball', 'bat')]
+df <- master_raw_df[img_id %in% c(3, 1937) & soa != 'Unlimited']
+
+
+
+```

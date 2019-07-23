@@ -239,7 +239,7 @@ ggplot(data.table(melt_kl_weighted_pror_stats_dt$kl_value/sum(melt_kl_weighted_p
 
 ```{r, warning=TRUE, message=FALSE, echo = FALSE}
 # Function - Perform single image analysis and generate plots
-analyse_plot_single_image <- function(master_df, imgid) {
+analyse_plot_single_imagexxx <- function(master_df, imgid) {
   dfi <- master_df[img_id == imgid]
   label_67 <- paste0("67ms (N=", img_soa_total_subjects[img_id == imgid & soa == "67"]$total_subjects, ",W=", img_soa_total_non_unique_words[img_id == imgid & soa == "67"]$total_words, ")")
   label_133 <- paste0("67ms (N=", img_soa_total_subjects[img_id == imgid & soa == "133"]$total_subjects,",W=", img_soa_total_non_unique_words[img_id == imgid & soa == "133"]$total_words, ")")

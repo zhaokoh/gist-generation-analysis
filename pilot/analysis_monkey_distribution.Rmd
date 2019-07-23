@@ -1,0 +1,85 @@
+---
+title: "Analysis of the condition and image distribution with monkey test run"
+subtitle: "Image condition distribution - `r format(Sys.time(), '%d %B, %Y')`"
+geometry: left=2cm,right=2cm,top=2cm,bottom=2cm
+output:
+  pdf_document:
+    latex_engine: xelatex
+  html_document:
+    df_print: paged
+header-includes: \usepackage{xcolor}
+---
+
+```{r include=FALSE}
+source('embed_import_libraries.R')
+source('embed_configuration.R')
+
+# Functions
+source('function-get_image_by_id.R')
+source('function-load_pilot_data.R')
+source('function-plot_image_result.R')
+source('function-plot_KL_divergence.R')
+source('function-plot_word_cloud.R')
+source('function-print_common_words.R')
+```
+
+```{r read-summary-df-file, echo=TRUE, message=TRUE, include = TRUE, warning=FALSE}
+# included_participants <- c(included_v0_lab_participants, included_v1_mturk_participants)
+
+summary_file = '../../data/pilot/v1_monkey/monkey_summary.csv'
+details_file = '../../data/pilot/v1_monkey/monkey_raw.csv'
+
+full_raw_df <- load_pilot_data(summary_file, details_file, c(1:30), by_subject = TRUE)
+
+analyse_df <- full_raw_df[!img %in% c("im0000003.jpg", "im0000009.jpg", "im0000014.jpg")]
+
+print(analyse_df[, .N, by = c("img_id", "soa")][order(img_id, soa)])
+
+print(analyse_df[, .N, by = .(subject, img_id, soa)])
+
+print(unique(analyse_df[, .N, by = .(subject, img_id, soa)]$N))
+```
+
+```{r include = FALSE}
+analyse_df$img_id <- factor(analyse_df$img_id)
+analyse_df$soa <- factor(analyse_df$soa)
+
+ggplot(analyse_df, aes(x = img_id, colour = soa, fill = soa)) +
+  geom_histogram(stat = "count") +
+  ggtitle("Number of responses by image") +
+  theme(axis.text.x = element_text(angle = 90))
+
+analyse_df$norm_trialnum <- factor(analyse_df$trialnum/2)
+ggplot(analyse_df, aes(x = norm_trialnum, colour = soa, fill = soa)) +
+  geom_histogram(stat = "count") +
+  ggtitle("Number of responses by trial number") +
+  theme(axis.text.x = element_text(angle = 90))
+
+ggplot(analyse_df, aes(x = norm_trialnum, colour = img_id, fill = img_id)) +
+  geom_histogram(stat = "count") +
+  ggtitle("Number of images by trial number") +
+  theme(axis.text.x = element_text(angle = 90))
+
+ggplot(analyse_df, aes(x = subject, y = norm_trialnum, colour = img_id)) +
+  geom_point() +
+  ggtitle("Image order for all subjects") +
+  ylab("Trial number")
+
+ggplot(analyse_df, aes(x = subject, y = norm_trialnum, colour = soa)) +
+  geom_point() +
+  ggtitle("SOA order for all subjects") +
+  ylab("Trial number")
+
+# full_raw_df$soa = as.factor(full_raw_df$soa)
+# 
+# full_df <- copy(full_raw_df) # This will be manipulated by reference so reassign to another variable.
+# all_df <- unique(full_df[, `:=`(frequency = sum(frequency), confidence = mean(confidence)),
+#                   by = c("img", "soa", "word", "img_id")][,-c("subject")])
+
+# Use test_df below to sanity check/cross-check all_df - assert(test_df == all_df)
+#test_df <- load_pilot_data(summary_file, details_file, included_all_participants, by_subject = FALSE)
+```
+
+`
+
+
