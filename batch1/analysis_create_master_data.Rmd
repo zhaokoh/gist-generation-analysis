@@ -1,0 +1,162 @@
+---
+title: "Analysis"
+subtitle: "MTurk Analysis - `r format(Sys.time(), '%d %B, %Y')`"
+geometry: left=2cm,right=2cm,top=2cm,bottom=2cm
+output:
+  pdf_document:
+    latex_engine: xelatex
+  html_document:
+    df_print: paged
+header-includes: \usepackage{xcolor}
+---
+
+```{r include=FALSE, echo=FALSE, message=FALSE}
+source('embed_import_libraries.R')
+source('embed_configuration.R')
+
+# Functions
+source('function-analyse_single_image_kl_divergence.R')
+source('function-analyse_plot_single_image.R')
+source('function-aggregate_word_column.R')
+source('function-calculate_kl_for_dataframe.R')
+source('function-compute_kl.R')
+source('function-compute_pairwise_kl.R')
+source('function-image_utilities.R')
+source('function-load_alon_descriptors.R')
+source('function-load_data.R')
+source('function-load_subject_data.R')
+source('function-plot_kl_divergence.R')
+source('function-plot_word_cloud.R')
+source('function-utilities.R')
+source('function-validate_img_soa_group_numbers.R')
+```
+
+```{r configuration, include=FALSE}
+# batch_no = "4"
+# version = "1"
+# batch_number = paste0('V1_', batch_no, '_', version, '_MT')
+# 
+# summary_file = paste0('../../data/batch_', batch_no, '/gist_batch_v1_', batch_no, '_', version, '_mt_summary.csv')
+# details_file = paste0('../../data/batch_', batch_no, '/gist_batch_v1_', batch_no, '_', version, '_mt_raw-sc.csv')
+# saved_data_file = paste0('batch', batch_no, '_', version, '_alon_all.RData')
+
+batch_no = "all"
+version = "all"
+batch_number = "V1_all"
+
+summary_file = paste0('../../data/gist_batch_v1_all_mt_summary.csv')
+details_file = paste0('../../data/gist_batch_v1_all_mt_raw.csv')
+saved_data_file = 'all.RData'
+
+exp_group_number = 30
+exp_image_number = 21
+
+# exp_group_number = 30
+# exp_image_number = 21 * 5
+
+# To check whether each image + soa has at least 10 group
+# reload_from_raw_data_file = TRUE
+# save_data_file = TRUE
+# load_from_data_file = FALSE
+# apply_sanity_check = TRUE
+
+reload_from_raw_data_file = FALSE
+save_data_file = FALSE
+load_from_data_file = TRUE
+apply_sanity_check = FALSE
+```
+
+```{r read-summary-df-file, echo=FALSE, message=FALSE, include = FALSE, warning=FALSE}
+
+if (reload_from_raw_data_file) {
+  ## Perform preliminary assertion checks on the data integrity
+  summary_details_list <- validate_img_soa_group_numbers(summary_file, details_file,
+                                                         expected_group_number = exp_group_number, 
+                                                         expected_image_number = exp_image_number,
+                                                         enforce_validation = apply_sanity_check)
+  summary_df <- summary_details_list$summary
+  details_df <- summary_details_list$details
+  
+  full_raw_df <- load_data(summary_file, details_file, by_subject = TRUE)
+  full_raw_df$soa = as.factor(full_raw_df$soa)
+  full_raw_subject_df <- load_subject_data(summary_file, details_file)
+  
+  full_df <- copy(full_raw_df) # This will be manipulated by reference so reassign to another variable.
+  all_df <- unique(full_df[,-c("subject", "trialnum", "group")][, `:=`(frequency = sum(frequency), confidence = mean(confidence)), by = c("img", "soa", "word", "img_id")])
+  
+  ## DO NOT UNCOMMENT ME - (Only for assertion check) Use test_df below to sanity check/cross-check all_df - assert(test_df == all_df)
+  test_df <- load_data(summary_file, details_file, by_subject = FALSE)
+  test_df$soa <- factor(test_df$soa)
+  
+  # Assertion check - both df are the same.
+  stopifnot(all_equal(all_df, test_df))
+}
+```
+
+```{r merge-alon-data, echo=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+if (reload_from_raw_data_file) {
+  alon_img_desc <- load_alon_descriptors(alon_present_words, alon_subject_descriptions, alon_remove_words, all_df$img_id)
+  master_raw_df <- merge(full_raw_df, alon_img_desc, by = c("img_id", "soa", "subject", "word", "frequency"), all = TRUE)[,-c("img")]
+  
+  if (save_data_file) {
+    save(summary_df, details_df, full_raw_df, full_raw_subject_df, full_df, 
+         all_df, alon_img_desc, master_raw_df, file=saved_data_file)
+  }
+}
+```
+
+```{r load-variables-from-file-instead, echo=FALSE}
+if (load_from_data_file) {
+  load(file = saved_data_file)
+}
+```
+
+## Experiment Configuration Details
+```{r print out configuration details for report, echo = FALSE, message=TRUE}
+print(paste0("Summary file processed: ", summary_file))
+print(paste0("Details file processed: ", details_file))
+```
+
+```{r ggplot exploratory analysis, warning=TRUE, message=TRUE, echo = FALSE}
+ggtitleimg <- function(title, imgid) {
+  return(ggtitle(paste0(title, ' (Image ', imgid, ')')))
+}
+
+master_raw_df$soa <- factor(master_raw_df$soa, levels=c("67", "133", "267", "Unlimited"))
+
+# Filter to only images that we are interested (20 images in pilot + 3 practice images)
+included_img_ids = unique(master_raw_df$img_id) 
+master_raw_df <- master_raw_df[img_id %in% included_img_ids]
+
+img_soa_total_subjects <- unique(master_raw_df[, .(img_id, soa, subject)])[, .(total_subjects = .N), by = c("img_id", "soa")]
+img_soa_total_groups <- unique(master_raw_df[, .(img_id, soa, group)])[, .(total_groups = .N), by = c("img_id", "soa")]
+
+# img_soa_total_non_unique_words <- master_raw_df[, .(total_words = .N), by = c("img_id", "soa")]
+# img_soa_total_unique_words <- unique(master_raw_df[, .(unique_words = .N), by = c("img_id", "soa", "word")])[, .(total_unique_words = .N), by = c("img_id", "soa")]
+# merge_img_soa_total_words <- merge(img_soa_total_non_unique_words, img_soa_total_unique_words, by = c("img_id", "soa"))
+
+total_subjects <- length(unique(master_raw_df$subject))
+total_mturk_subjects <- length(unique(master_raw_df[soa != 'Unlimited']$subject))
+  
+print(paste0("Total participants (includes Shinji's): ", total_subjects))
+print(paste0("Total participants (only MTurk): ", total_mturk_subjects))
+print(paste0("Total images (including 3 practice images): ", length(included_img_ids)))
+
+if (apply_sanity_check) {
+  sanity_check_less_group_df <- master_raw_df[soa != 'Unlimited' & !img_id %in% c(3, 9, 14), length(unique(group)), by = c("img_id", "soa")][order(img_id, soa)][V1 < 10]
+  
+  if (nrow(sanity_check_less_group_df) > 0) {
+    print("Image SOAs that have less than 10 subjects/groups")
+    print(sanity_check_less_group_df)
+  }
+  
+  stopifnot(nrow(sanity_check_less_group_df) == 0)
+}
+
+theme_set(theme_minimal() + theme(panel.grid = element_blank()))
+
+# Here we provide the stemmed version of the master_raw_df (with word column replaced by the concatenate words that consider the same)
+master_raw_stem_df <- cbind(master_raw_df, stem_word = stem_words(master_raw_df$word)$stem_word)
+
+save.image(file = "psy4100_master_data.RData")
+```

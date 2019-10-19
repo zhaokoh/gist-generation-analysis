@@ -32,12 +32,23 @@ source('function-validate_img_soa_group_numbers.R')
 This report is to calculate the correlation of the descriptors generated from Shinji's Japanese annotations. There are 570 images and 4185 descriptors (presence words).
 
 ```{r load-variables-from-file-instead, echo=FALSE}
-alon_present_words_df <- data.table(fread("../analysis-data/alon_image_present_words.csv", encoding = "UTF-8"))
+batch_no = "all"
+version = "all"
+batch_number = "V1_all"
+
+saved_data_file = 'all.RData'
+
+exp_group_number = 30
+exp_image_number = 21
+
+load(file = saved_data_file)
+
+# master_raw_df contains the full list
 
 word_list <- c()
-for (imgid in unique(alon_present_words_df$image_id)) {
+for (imgid in unique(master_raw_df$img_id)) {
   word_list <- c(word_list, 
-                 gsub(",", " ", alon_present_words_df[image_id == imgid]$present_words))
+                 paste(master_raw_df[img_id == imgid]$word, collapse = " "))
 }
   
 docs <- VCorpus(VectorSource(word_list))
@@ -53,8 +64,6 @@ docs <- tm_map(docs, removeNumbers)
 #docs <- tm_map(docs, lemmatize_strings, language = "english")
   
 ```
-
-
 
 First, we construct a "Term Document Matrix" where each row is a word and a column is an image. So the size of the matrix is 4185x570. Note the sparsity of the matrix is 99%.
 
@@ -103,11 +112,11 @@ Next, we calculate the pairwise correlation between between words and construct 
 # rownames(spearman_cor) <- all_words
 # colnames(spearman_cor) <- all_words
 # 
-# save(tdm, pearson_cor, spearman_cor, file = 'shinji_word_correlation.RData')
+# save(tdm, spearman_cor, file = 'all_word_spearman_correlation.RData')
 ```
 
 ```{r }
-load("shinji_word_correlation.RData")
+load("all_word_spearman_correlation.RData")
 ```
 
 ```{r }
@@ -116,14 +125,7 @@ load("shinji_word_correlation.RData")
 # partial_cor[upper.tri(partial_cor)] <- NA
 # partial_cor[diag(partial_cor)] <- NA
 
-melt_shinji_word_corr <- melt(pearson_cor[lower.tri(pearson_cor)])
 melt_shinji_spearman_word_corr <- melt(spearman_cor[lower.tri(spearman_cor)])
-
-p <- ggplot(melt_shinji_word_corr, aes(x=value)) +
-    geom_histogram(aes(y = cumsum(..count..)/nrow(melt_shinji_word_corr)*100), bins = 100, color="black", fill="white") +
-    stat_bin(aes(y=cumsum(..count..)/nrow(melt_shinji_word_corr)*100),geom="line",color="red") +
-    ylab("Percentage (%)") +
-    xlab("Correlation r")
 
 q <- ggplot(melt_shinji_spearman_word_corr, aes(x=value)) +
     geom_histogram(aes(y = cumsum(..count..)/nrow(melt_shinji_spearman_word_corr)*100), bins = 100, color="black", fill="white") +
@@ -172,7 +174,7 @@ plot_grid(title, p_grid, ncol=1, rel_heights=c(0.1, 1)) # rel_heights values con
 
 h <- 7
 ar <- 1.5
-ggsave(p_grid, height=h, width= h*ar, filename = "shinji-word-association.png")
+ggsave(p_grid, height=h, width= h*ar, filename = "current-experiment-association.png")
 
 ```
 

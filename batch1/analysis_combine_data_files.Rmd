@@ -24,24 +24,41 @@ source('function-validate_img_soa_group_numbers.R')
 ```
 
 ```{r configuration, include=FALSE}
+
+# summary_files = c(
+#   '../../data/batch_4/gist_batch_v1_4_1_mt_summary.csv',
+#   '../../data/batch_4/gist_batch_v1_4_2_mt_summary.csv',
+#   '../../data/batch_4/gist_batch_v1_4_3_mt_summary.csv',
+#   '../../data/batch_4/gist_batch_v1_4_4_mt_summary.csv',
+#   '../../data/batch_4/gist_batch_v1_4_5_mt_summary.csv'
+# )
+# 
+# details_files = c(
+#   '../../data/batch_4/gist_batch_v1_4_1_mt_raw-sc.csv',
+#   '../../data/batch_4/gist_batch_v1_4_2_mt_raw-sc.csv',
+#   '../../data/batch_4/gist_batch_v1_4_3_mt_raw-sc.csv',
+#   '../../data/batch_4/gist_batch_v1_4_4_mt_raw-sc.csv',
+#   '../../data/batch_4/gist_batch_v1_4_5_mt_raw-sc.csv'
+# )
+
 summary_files = c(
-  '../../data/batch_1/gist_batch_v1_1_1_mt_summary.csv',
-  '../../data/batch_1/gist_batch_v1_1_2_mt_summary.csv',
-  '../../data/batch_1/gist_batch_v1_1_3_mt_summary.csv',
-  '../../data/batch_1/gist_batch_v1_1_4_mt_summary.csv',
-  '../../data/batch_1/gist_batch_v1_1_5_mt_summary.csv'
+  '../../data/batch_1/gist_batch_v1_1_all_mt_summary.csv',
+  '../../data/batch_2/gist_batch_v1_2_all_mt_summary.csv',
+  '../../data/batch_3/gist_batch_v1_3_all_mt_summary.csv',
+  '../../data/batch_4/gist_batch_v1_4_all_mt_summary.csv'
 )
 details_files = c(
-  '../../data/batch_1/gist_batch_v1_1_1_mt_raw-sc.csv',
-  '../../data/batch_1/gist_batch_v1_1_2_mt_raw-sc.csv',
-  '../../data/batch_1/gist_batch_v1_1_3_mt_raw-sc.csv',
-  '../../data/batch_1/gist_batch_v1_1_4_mt_raw-sc.csv',
-  '../../data/batch_1/gist_batch_v1_1_5_mt_raw-sc.csv'
+  '../../data/batch_1/gist_batch_v1_1_all_mt_raw.csv',
+  '../../data/batch_2/gist_batch_v1_2_all_mt_raw.csv',
+  '../../data/batch_3/gist_batch_v1_3_all_mt_raw.csv',
+  '../../data/batch_4/gist_batch_v1_4_all_mt_raw.csv'
 )
 
-all_summary_filename = '../../data/batch_1/gist_batch_v1_1_mt_summary_all.csv'
-all_details_filename = '../../data/batch_1/gist_batch_v1_1_mt_raw_all.csv'
+all_summary_filename = '../../data/gist_batch_v1_all_mt_summary.csv'
+all_details_filename = '../../data/gist_batch_v1_all_mt_raw.csv'
 
+# all_summary_filename = '../../data/batch_4/gist_batch_v1_4_all_mt_summary.csv'
+# all_details_filename = '../../data/batch_4/gist_batch_v1_4_all_mt_raw.csv'
 ```
 
 ```{r read-summary-details-df, echo=FALSE, message=FALSE, include = FALSE, warning=FALSE}

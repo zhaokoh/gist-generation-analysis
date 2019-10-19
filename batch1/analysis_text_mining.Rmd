@@ -29,7 +29,7 @@ source('function-validate_img_soa_group_numbers.R')
 ```
 
 ```{r load-variables-from-file-instead, echo=FALSE}
-load(file = 'batch1_alon_all.RData')
+load(file = 'all.RData')
 ```
 
 
@@ -321,18 +321,6 @@ plot.igraph(refund.adj, vertex.shape="none", vertex.label.font=6, vertex.label.c
 
 ```
 
-```{r try pairwise_cor and draw a network of words}
-set.seed(2016)
-
-a %>%
-  filter(correlation > .15) %>%
-  graph_from_data_frame() %>%
-  ggraph(layout = "fr") +
-  geom_edge_link(aes(edge_alpha = correlation), show.legend = FALSE) +
-  geom_node_point(color = "lightblue", size = 5) +
-  geom_node_text(aes(label = name), repel = TRUE) +
-  theme_void()
-```
 
 ```{r }
 library("tidytext")
@@ -389,6 +377,9 @@ ap_top_terms %>%
   facet_wrap(~ topic, scales = "free") +
   coord_flip()
 
+ggsave(paste0('test-topics.png'))
+
+
 ## Greatest difference
 # beta_spread <- ap_topics %>%
 #   mutate(topic = paste0("topic", topic)) %>%
@@ -435,6 +426,11 @@ for (i in unique(ap_documents$topic)) {
  
   ggsave(paste0('test', as.String(i), '.png'))
 }
+```
+
+```{r }
+
 
 ```
+
 

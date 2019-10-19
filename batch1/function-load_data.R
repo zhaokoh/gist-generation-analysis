@@ -7,7 +7,7 @@ load_data <- function(summary_file, details_file, by_subject = FALSE) {
   details_df = subset(details_df, subject %in% summary_df$script.subjectid)
 
   all_df <- data.table();
-
+  
   # Practice data
   practice_block_df <- details_df[blockcode=='practice_block' & response != 0,]
   if (nrow(practice_block_df) > 0) {
@@ -104,7 +104,10 @@ construct_table_by_exp_data <- function(experiment.data, by_subject = FALSE) {
         next
       }
       
-      img_soa.data.long <- melt(img_soa.data, id.vars = c("subject", "blocknum","trialnum", "values.soa"),   
+      # img_soa.data.long <- melt(img_soa.data, id.vars = c("subject", "blocknum","trialnum", "values.soa", "values.est_soa"),   
+      #                           measure.vars = c("d1","d2","d3","d4","d5",
+      #                                            "rb1","rb2","rb3","rb4","rb5"))
+      img_soa.data.long <- melt(img_soa.data, id.vars = c("subject", "blocknum","trialnum", "values.soa", "values.est_soa"),   
                                 measure.vars = c("d1","d2","d3","d4","d5",
                                                  "rb1","rb2","rb3","rb4","rb5"))
       

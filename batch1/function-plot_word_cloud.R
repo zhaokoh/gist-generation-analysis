@@ -10,27 +10,103 @@ plot_word_cloud <- function(data, title_text = "", size, plot_word_cloud = TRUE,
     # data$d4[has_nothing_response(data$d4)] <- "Nothing"
     # data$d5[has_nothing_response(data$d5)] <- "Nothing"
 
-    words <- data %>%
+    words <- data
+    
+    # Ignore Don't Know
+    words[words$rb1 == "Don't Know", d1 := "NA"]
+    words[words$rb2 == "Don't Know", d2 := "NA"]
+    words[words$rb3 == "Don't Know", d3 := "NA"]
+    words[words$rb4 == "Don't Know", d4 := "NA"]
+    words[words$rb5 == "Don't Know", d5 := "NA"]
+    
+    # Convert confidence ratings to numbers
+    words[words$rb1 == "Don't Know",]$rb1 <- "0"
+    words[words$rb2 == "Don't Know",]$rb2 <- "0"
+    words[words$rb3 == "Don't Know",]$rb3 <- "0"
+    words[words$rb4 == "Don't Know",]$rb4 <- "0"
+    words[words$rb5 == "Don't Know",]$rb5 <- "0"
+
+    words[words$rb1 == "Guess",]$rb1 <- "1"
+    words[words$rb2 == "Guess",]$rb2 <- "1"
+    words[words$rb3 == "Guess",]$rb3 <- "1"
+    words[words$rb4 == "Guess",]$rb4 <- "1"
+    words[words$rb5 == "Guess",]$rb5 <- "1"
+    
+    words[words$rb1 == "Maybe",]$rb1 <- "2"
+    words[words$rb2 == "Maybe",]$rb2 <- "2"
+    words[words$rb3 == "Maybe",]$rb3 <- "2"
+    words[words$rb4 == "Maybe",]$rb4 <- "2"
+    words[words$rb5 == "Maybe",]$rb5 <- "2"
+
+    words[words$rb1 == "Confident",]$rb1 <- "3"
+    words[words$rb2 == "Confident",]$rb2 <- "3"
+    words[words$rb3 == "Confident",]$rb3 <- "3"
+    words[words$rb4 == "Confident",]$rb4 <- "3"
+    words[words$rb5 == "Confident",]$rb5 <- "3"
+    
+    words[words$rb1 == "Very Confident",]$rb1 <- "4"
+    words[words$rb2 == "Very Confident",]$rb2 <- "4"
+    words[words$rb3 == "Very Confident",]$rb3 <- "4"
+    words[words$rb4 == "Very Confident",]$rb4 <- "4"
+    words[words$rb5 == "Very Confident",]$rb5 <- "4"
+
+    confidence_words <- words %>%
+      melt(measure.vars = c("d1","d2","d3","d4","d5","rb1","rb2","rb3","rb4","rb5"))
+    confidence_words <- confidence_words[value != "NA" & value != "0", ]
+    confidence_words$value <- tolower(confidence_words$value)
+
+    confidence_words_w <- data.table(confidence_words)[variable %in% c("d1", "d2", "d3", "d4", "d5")]
+    confidence_words_c <- data.table(confidence_words)[variable %in% c("rb1", "rb2", "rb3", "rb4", "rb5")]
+    
+    confidence_words_c$variable <- sub(pattern = "rb([1-5])", replacement = "d\\1", x = confidence_words_c$variable)
+    confidence_words_merge <- merge(confidence_words_w, confidence_words_c, 
+                                    by = c("subject", "blocknum", "trialnum", "values.soa", "values.img_file", "variable"),
+                                    suffixes = c(".word", ".confidence"),
+                                    all=FALSE)
+
+    words <- words %>%
     unite("row_words", d1, d2, d3, d4, d5, sep = "@", remove = FALSE) %>%
     dplyr::select(row_words)
-  all_words = paste(words$row_words, collapse = "@")
+    all_words = paste(words$row_words, collapse = "@")
 
-  d <- cleanse_words(all_words, FUN = preprocess_words_to_docs)
+    d <- cleanse_words(all_words, FUN = preprocess_words_to_docs)
 
   if (length(d$word) > 1) {
     if (plot_word_cloud == TRUE) {
       set.seed(1234)
       plot_word_cloud = wordcloud(words = d$word, freq = d$freq, min.freq = 1,
-                max.words=200, random.order=FALSE, rot.per=0.35, 
-                colors=brewer.pal(3, "Dark2"), scale = c(size, 0.5))
-      title(title_text, line = title_offset)
+                max.words=300, random.order=FALSE, rot.per=0.35, 
+                colors=brewer.pal(3, "Dark2"), scale = c(size, 1.5))
+      #title(title_text, line = title_offset)
     }
     
     dt <- data.table(word = d$word, frequency = d$freq)
 
     names(dt) <- c("word", "freq")
     #dt$freq <- (dt$freq)^(2/3)
-    #print(wordcloud2(dt, size = 0.25))
+    dt <- dt[word != "na"]
+
+    cur_colour_list <- rev(colorRampPalette(brewer.pal(name="Blues", n = 8))(20))
+    default_color_list <- rep("#bfbfbf", nrow(dt))
+
+    total_colors <- length(cur_colour_list)
+    word_size <- min(length(cur_colour_list), nrow(dt[freq > 1]))
+    top_x_words <- dt$word[1:word_size]
+    #View(top_x_words)
+    
+    accum_word_conf <- confidence_words_merge[
+      value.word %in% top_x_words, 
+      .(avg_confidence = mean(as.integer(value.confidence))), 
+      by = value.word][order(-avg_confidence)]
+
+    #View(accum_word_conf)
+    
+    final_colour_list <- rev(colorRampPalette(brewer.pal(name="Blues", n = 8))(20))[1:word_size]
+    all_colour_list <- c(final_colour_list[match(top_x_words, accum_word_conf$value.word)], default_color_list)
+    
+    wc <- wordcloud2(dt, size = 0.8, color = all_colour_list, minSize = 5)
+    print(wc + WCtheme(1))
+    #print(wc)
 
     return(dt)
   } else  if (length(d$word) == 1) {

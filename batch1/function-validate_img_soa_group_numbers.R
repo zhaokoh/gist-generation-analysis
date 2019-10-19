@@ -43,3 +43,5 @@ validate_img_soa_group_numbers <- function(summary_file, details_file, expected_
   
   return(list("summary" = summary_df, "details" = details_df))
 }
+
+

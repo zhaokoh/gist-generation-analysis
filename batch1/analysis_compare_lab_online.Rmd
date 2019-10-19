@@ -1,6 +1,6 @@
 ---
-title: "Analysis"
-subtitle: "Batch 1_1 (Imageset 1 Bucket 1) Analysis - `r format(Sys.time(), '%d %B, %Y')`"
+title: "Analysis - Gist generation"
+subtitle: "Comparison of responses between lab and MTurk participants - `r format(Sys.time(), '%d %B, %Y')`"
 geometry: left=2cm,right=2cm,top=2cm,bottom=2cm
 output:
   pdf_document:
@@ -17,6 +17,7 @@ source('embed_configuration.R')
 # Functions
 source('function-analyse_plot_single_image.R')
 source('function-aggregate_word_column.R')
+source('function-calculate_kl_for_dataframe.R')
 source('function-compute_kl.R')
 source('function-compute_pairwise_kl.R')
 source('function-image_utilities.R')
@@ -25,6 +26,7 @@ source('function-load_data.R')
 source('function-load_subject_data.R')
 source('function-plot_kl_divergence.R')
 source('function-plot_word_cloud.R')
+source('function-utilities.R')
 source('function-validate_img_soa_group_numbers.R')
 
 library(ggrepel)
@@ -32,242 +34,775 @@ library(gridExtra)
 
 ```
 
+## Overview
+
+The purpose of this analysis is to compare whether the performance of MTurk participants were significantly different from the lab participants, in the gist generation experiment.
+
+In the experiment, participant provided five words to describe their impression of the images, flashed in different SOAs - 67ms, 133ms, and 267ms. Participants completed 1 block - which contains 21 images.
+
+## Analysis Approach
+
+To cover all permutation of images + SOA conditions in each block, we need 30 participants. We use the same experiments and stimuli between lab and online.
+
+In MTurk, we had collected responses from at least 30 particpants. However, in the lab, we only had 10 participants to cover a subset of the image + SOA permutations.
+
+As a result, we will use a goodness-of-fit test to see if the performance of the 10 lab participants were significantly different from online participants.
+
+As participants were generating words (qualitative data), we summarised the word distribution under each SOA for each image, and calculate the KL divergence between each pair of SOAs, namely between 67 and 133ms (67-133), 133 and 267ms (133-267) and 67 and 267ms (67-267).
+
+If the conditions between lab and MTurk participants are similar, the performance of MTurk participants and lab participants should not be significantly different.
+
+### Details
+
+The following describes the detail step of the analysis:
+
+* We repeated the following in 50 iterations:
+  * Randonly select 10 participants out of 30 from the MTurk experiments.
+  * Calculate the KL divergence values (67-133, 133-267, 67-267) in this subset of 10 participants for all the images and store them into a table.
+* We created a table of 50 x 21 = 1050 rows and each image will have 50 rows of KL divergence values.
+* We calculated the median of the three KL divergence groups - median_67_133, median_133_267, median_67_267.
+* We calculated the KL divergence values for the same experiment for lab participants.
+* We used KS-Test to determine if the KL divergence values from the lab were significantly different from the online KL divergence (median).
+
 ```{r configuration, include=FALSE}
-summary_file_lb = '../../data/batch_1/gist_batch_v1_1_2_lb_summary.csv'
-details_file_lb = '../../data/batch_1/gist_batch_v1_1_2_lb_raw.csv'
+summary_file_lb = c(
+  '../../data/batch_1/gist_batch_v1_1_1_lb_summary.csv',
+  '../../data/batch_1/gist_batch_v1_1_2_lb_summary.csv',
+  '../../data/batch_1/gist_batch_v1_1_3_lb_summary.csv',
+  '../../data/batch_1/gist_batch_v1_1_4_lb_summary.csv')
 
-summary_file_mt = '../../data/batch_1/gist_batch_v1_1_2_mt_all_summary.csv'
-details_file_mt = '../../data/batch_1/gist_batch_v1_1_2_mt_all_raw.csv'
+details_file_lb = c(
+  '../../data/batch_1/gist_batch_v1_1_1_lb_raw-sc.csv',
+  '../../data/batch_1/gist_batch_v1_1_2_lb_raw-sc.csv',
+  '../../data/batch_1/gist_batch_v1_1_3_lb_raw-sc.csv',
+  '../../data/batch_1/gist_batch_v1_1_4_lb_raw-sc.csv')
 
-# To check whether each image + soa has at least 10 group
-reload_from_raw_data_file = TRUE
-save_data_file = FALSE
-load_from_data_file = FALSE
-apply_sanity_check = FALSE
+summary_file_mt = c(
+  '../../data/batch_1/gist_batch_v1_1_1_mt_summary.csv',
+  '../../data/batch_1/gist_batch_v1_1_2_mt_summary.csv',
+  '../../data/batch_1/gist_batch_v1_1_3_mt_summary.csv',
+  '../../data/batch_1/gist_batch_v1_1_4_mt_summary.csv')
+
+details_file_mt = c(
+  '../../data/batch_1/gist_batch_v1_1_1_mt_raw-sc.csv',
+  '../../data/batch_1/gist_batch_v1_1_2_mt_raw-sc.csv',
+  '../../data/batch_1/gist_batch_v1_1_3_mt_raw-sc.csv',
+  '../../data/batch_1/gist_batch_v1_1_4_mt_raw-sc.csv')
 
 ```
 
 ```{r read-summary-df-file, echo=FALSE, message=FALSE, include = FALSE, warning=FALSE}
 
-load_raw_df <- function(summary_file, details_file) {
-  ## Perform preliminary assertion checks on the data integrity
-  summary_details_list <- validate_img_soa_group_numbers(summary_file, details_file,
-                                                         expected_group_number = 0, 
-                                                         expected_image_number = 0,
-                                                         enforce_validation = FALSE)
-  summary_df <- summary_details_list$summary
-  details_df <- summary_details_list$details
-  
-  full_raw_df <- load_data(summary_file, details_file, by_subject = TRUE)
-  full_raw_df$soa = as.factor(full_raw_df$soa)
-  full_raw_subject_df <- load_subject_data(summary_file, details_file)
-  
-  full_df <- copy(full_raw_df) # This will be manipulated by reference so reassign to another variable.
-  all_df <- unique(full_df[,-c("subject", "trialnum", "group")][, `:=`(frequency = sum(frequency), confidence = mean(confidence)), by = c("img", "soa", "word", "img_id")])
-  
-  master_raw_df <- full_df[, c("img_id", "soa", "subject", "word", "frequency", "confidence")]
-  return(master_raw_df)
-}
-
-lab_raw_df <- load_raw_df(summary_file_lb, details_file_lb)
-mt_raw_df <- load_raw_df(summary_file_mt, details_file_mt)
-
-```
-
-```{r ggplot exploratory analysis, warning=TRUE, message=TRUE, echo = FALSE}
-# master_raw_df$soa <- factor(master_raw_df$soa, levels=c("67", "133", "267", "Unlimited"))
+# load_raw_df <- function(summary_file, details_file, identifier) {
+#   ## Perform preliminary assertion checks on the data integrity
+#   summary_details_list <- validate_img_soa_group_numbers(summary_file, details_file,
+#                                                          expected_group_number = 0,
+#                                                          expected_image_number = 0,
+#                                                          enforce_validation = FALSE)
+#   summary_df <- summary_details_list$summary
+#   details_df <- summary_details_list$details
 # 
-# # Filter to only images that we are interested (20 images in pilot + 3 practice images)
-# included_img_ids = unique(master_raw_df$img_id) 
-# master_raw_df <- master_raw_df[img_id %in% included_img_ids]
+#   full_raw_df <- load_data(summary_file, details_file, by_subject = TRUE)
+#   full_raw_df$soa = as.factor(full_raw_df$soa)
+#   full_raw_subject_df <- load_subject_data(summary_file, details_file)
 # 
-# img_soa_total_subjects <- unique(master_raw_df[, .(img_id, soa, subject)])[, .(total_subjects = .N), by = c("img_id", "soa")]
-# img_soa_total_groups <- unique(master_raw_df[, .(img_id, soa, group)])[, .(total_groups = .N), by = c("img_id", "soa")]
+#   full_df <- copy(full_raw_df) # This will be manipulated by reference so reassign to another variable.
+#   all_df <- unique(full_df[,-c("subject", "trialnum", "group")][, `:=`(frequency = sum(frequency), confidence = mean(confidence)), by = c("img", "soa", "word", "img_id")])
 # 
-# img_soa_total_non_unique_words <- master_raw_df[, .(total_words = .N), by = c("img_id", "soa")]
-# img_soa_total_unique_words <- unique(master_raw_df[, .(unique_words = .N), by = c("img_id", "soa", "word")])[, .(total_unique_words = .N), by = c("img_id", "soa")]
-# merge_img_soa_total_words <- merge(img_soa_total_non_unique_words, img_soa_total_unique_words, by = c("img_id", "soa"))
-# 
-# total_subjects <- length(unique(master_raw_df$subject))
-#   
-# print(paste0("Total participants: ", total_subjects))
-# print(paste0("Total images: ", length(included_img_ids)))
-# 
-# if (apply_sanity_check) {
-#   sanity_check_less_group_df <- master_raw_df[soa != 'Unlimited' & !img_id %in% c(3, 9, 14), length(unique(group)), by = c("img_id", "soa")][order(img_id, soa)][V1 < 10]
-#   
-#   if (nrow(sanity_check_less_group_df) > 0) {
-#     print("Image SOAs that have less than 10 subjects/groups")
-#     print(sanity_check_less_group_df)
-#   }
-#   
-#   stopifnot(nrow(sanity_check_less_group_df) == 0)
+#   master_raw_df <- full_df[, c("img_id", "soa", "subject", "word", "frequency", "confidence")]
+#   master_raw_df <- cbind(master_raw_df, experiment_no = identifier)
+#   return(master_raw_df)
 # }
+# 
+# lab_raw_df = data.table()
+# for (i in 1:length(summary_file_lb)) {
+#   lab_raw_df <- rbind(lab_raw_df, load_raw_df(summary_file_lb[i], details_file_lb[i], i))
+# }
+# lab_raw_stem_df <- cbind(lab_raw_df, stem_word = stem_words(lab_raw_df$word)$stem_word)
+# 
+# mt_raw_df = data.table()
+# for (i in 1:length(summary_file_mt)) {
+#   mt_raw_df <- rbind(mt_raw_df, load_raw_df(summary_file_mt[i], details_file_mt[i], i))
+# }
+# mt_raw_stem_df <- cbind(mt_raw_df, stem_word = stem_words(mt_raw_df$word)$stem_word)
 
-theme_set(theme_minimal() + 
-            theme(panel.grid = element_blank()))
+load('analysis_compare_lab_online.RData')
 
-# Here we provide the stemmed version of the master_raw_df (with word column replaced by the concatenate words that consider the same)
-#master_raw_stem_df <- cbind(master_raw_df, stem_word = stem_words(master_raw_df$word)$stem_word)
+## Exclude two lab members (2)
+lab_raw_df <- lab_raw_df[as.integer(subject) > 100]
+lab_raw_stem_df <- lab_raw_stem_df[as.integer(subject) > 100]
 ```
 
-```{r }
+
+## Results
+
+### Comparison of confidence ratings
+
+```{r echo=FALSE, message=TRUE, warning=FALSE, echo=FALSE}
 ## Plot both confidence intervals
 
+theme_set(theme_cowplot())
+
 confidence_lab_df <- copy(lab_raw_df)
+confidence_lab_df <- confidence_lab_df[experiment_no == 1]
 confidence_lab_df$soa <- as.factor(confidence_lab_df$soa)
 confidence_lab_df$img_id <- as.factor(confidence_lab_df$img_id)
 confidence_lab_df$confidence <- as.factor(confidence_lab_df$confidence)
 
 confidence_mt_df <- copy(mt_raw_df)
+confidence_mt_df <- confidence_mt_df[experiment_no == 1]
 confidence_mt_df$soa <- as.factor(confidence_mt_df$soa)
 confidence_mt_df$img_id <- as.factor(confidence_mt_df$img_id)
 confidence_mt_df$confidence <- as.factor(confidence_mt_df$confidence)
 
 # Combined confidence
-plab_1 <- ggplot(confidence_lab_df[soa != "Unlimited"], aes(x = soa, fill = confidence)) +
-  geom_histogram(stat = "count") +
-  xlab("SOA") +
-  ylab("Confidence Ratings Count") +
-  scale_fill_grey(start = 0, end = .9, 
-                  name = "Confidence", 
-                  labels = c("Don't know", "Guess", "Maybe", "Confident", "Very Confident")) +
+confidence_lab_plot_df <- confidence_lab_df[soa != "Unlimited", .(count = sum(frequency)), by = c("soa", "confidence")][, .(soa, confidence, count, percentage = count*100/sum(count))]
+
+plab_1 <- ggplot(confidence_lab_plot_df, 
+                 aes(x = soa, 
+                     y = percentage,
+                     fill = confidence)) +
+  #geom_histogram(stat = "identity") +
+  geom_bar(position = 'fill', stat = 'identity') + 
+  xlab("Presentation Duration") +
+  ylab("Percentage (%)") +
+  scale_y_continuous(expand = c(0, 0), labels = function(x) paste0(x*100)) +
   ggtitle(paste0("Lab (N=", length(unique(confidence_lab_df$subject)), ")"))+ 
-  theme(axis.text = element_text(size = 12))
+  theme(legend.text = element_text(size=16), axis.text = element_text(size = 22), plot.title = element_text(size = 20)) +
+  scale_fill_brewer(palette="Paired",name = "Confidence Rating", 
+                  labels = c("Don't know", "Guess", "Maybe", "Confident", "Very Confident"))
 
-plab_2 <- ggplot(confidence_lab_df[soa != "Unlimited"], aes(x = img_id, fill = confidence)) +
-  geom_histogram(stat = "count", position = "fill") +
-  xlab("Image") +
-  ylab("Confidence Ratings Proportion") +
-  scale_fill_grey(start = 0, end = .9, 
-                  name = "Confidence", 
-                  labels = c("Don't know", "Guess", "Maybe", "Confident", "Very Confident")) +
-  theme(axis.text = element_text(size = 10), axis.text.x = element_text(angle = 90, vjust = 1))
+# plab_2 <- ggplot(confidence_lab_df[soa != "Unlimited"], aes(x = img_id, fill = confidence)) +
+#   geom_histogram(stat = "count", position = "fill") +
+#   xlab("Image") +
+#   ylab("Confidence Ratings Proportion") +
+#   scale_fill_grey(start = 0, end = .9, 
+#                   name = "Confidence", 
+#                   labels = c("Don't know", "Guess", "Maybe", "Confident", "Very Confident")) +
+#   theme(axis.text = element_text(size = 10), axis.text.x = element_text(angle = 90, vjust = 1))
 
-pmt_1 <- ggplot(confidence_mt_df[soa != "Unlimited"], aes(x = soa, fill = confidence)) +
-  geom_histogram(stat = "count") +
-  xlab("SOA") +
-  ylab("Confidence Ratings Count") +
-  scale_fill_grey(start = 0, end = .9, 
-                  name = "Confidence", 
-                  labels = c("Don't know", "Guess", "Maybe", "Confident", "Very Confident")) +
+confidence_mt_plot_df <- confidence_mt_df[soa != "Unlimited", .(count = sum(frequency)), by = c("soa", "confidence")][, .(soa, confidence, count, percentage = count*100/sum(count))]
+
+pmt_1 <- ggplot(confidence_mt_plot_df, aes(x = soa, y = percentage, fill = confidence)) +
+  geom_bar(position = 'fill', stat = 'identity') + 
+  xlab("Presentation Duration") +
+  ylab("Percentage (%)") +
+  scale_y_continuous(expand = c(0, 0), labels = function(x) paste0(x*100)) +
   ggtitle(paste0("Online (N=", length(unique(confidence_mt_df$subject)), ")"))+ 
-  theme(axis.text = element_text(size = 12))
+  theme(legend.text = element_text(size=16), axis.text = element_text(size = 22), plot.title = element_text(size = 20)) +
+  scale_fill_brewer(palette="Paired", name = "Confidence Rating", 
+                  labels = c("Don't know", "Guess", "Maybe", "Confident", "Very Confident"))
 
-pmt_2 <- ggplot(confidence_mt_df[soa != "Unlimited"], aes(x = img_id, fill = confidence)) +
-  geom_histogram(stat = "count", position = "fill") +
-  xlab("Image") +
-  ylab("Confidence Ratings Proportion") +
-  scale_fill_grey(start = 0, end = .9, 
-                  name = "Confidence", 
-                  labels = c("Don't know", "Guess", "Maybe", "Confident", "Very Confident")) +
-  theme(axis.text = element_text(size = 10), axis.text.x = element_text(angle = 90, vjust = 1))
+# pmt_2 <- ggplot(confidence_mt_df[soa != "Unlimited"], aes(x = img_id, fill = confidence)) +
+#   geom_histogram(stat = "count", position = "fill") +
+#   xlab("Image") +
+#   ylab("Confidence Ratings Proportion") +
+#   scale_fill_grey(start = 0, end = .9, 
+#                   name = "Confidence", 
+#                   labels = c("Don't know", "Guess", "Maybe", "Confident", "Very Confident")) +
+#   theme(axis.text = element_text(size = 10), axis.text.x = element_text(angle = 90, vjust = 1))
 
 g_all <- grid.arrange(
- plab_1, pmt_1, plab_2, pmt_2,
+ plab_1, pmt_1, 
+ #plab_2, pmt_2,
+  nrow = 1, ncol = 2)
+
+h <- 8
+ar <- 1.5
+ggsave(g_all, height=h, width= h*ar, filename = "comparison-lab-online-confidence.png")
+
+# Perform model comparison between lab and online
+
+combine_conf_df <- rbind(confidence_lab_df[, .(img_id, soa, subject, confidence, type = "lab")], 
+                        confidence_mt_df[, .(img_id, soa, subject, confidence, type = "online")])
+combine_conf_df$confidence <- as.numeric(combine_conf_df$confidence)
+
+lme_full <- lmer(confidence ~ 1 + soa + type + (soa * type) + (1|img_id) + (1 | subject), data = combine_conf_df, REML = FALSE)
+lme_full_no_interact <- lmer(confidence ~ 1 + soa + type + (1|img_id) + (1 | subject), data = combine_conf_df, REML = FALSE)
+lme_no_type <- lmer(confidence ~ 1 + soa + (1|img_id) + (1 | subject), data = combine_conf_df, REML = FALSE)
+lme_no_type_soa <- lmer(confidence ~ 1 + (1|img_id) + (1 | subject), data = combine_conf_df, REML = FALSE)
+
+anova(lme_full, lme_full_no_interact, lme_no_type, lme_no_type_soa, type = "LRT")
+
+summary(lme_no_type)
+
+
+AIC(lme_full, lme_full_no_interact, lme_no_type, lme_no_type_soa)
+BIC(lme_full, lme_full_no_interact, lme_no_type, lme_no_type_soa)
+
+
+lme_no_type_no_sbj <- lmer(confidence ~ 1 + soa + (1|img_id), data = combine_conf_df, REML = FALSE)
+lme_no_type_no_img <- lmer(confidence ~ 1 + soa + (1|subject), data = combine_conf_df, REML = FALSE)
+
+anova(lme_no_type, lme_no_type_no_sbj, lme_no_type_no_img, type = "LRT")
+AIC(lme_no_type, lme_no_type_no_sbj, lme_no_type_no_img)
+BIC(lme_no_type, lme_no_type_no_sbj, lme_no_type_no_img)
+
+```
+
+```{r include = FALSE}
+
+## Boot-strapping function
+
+# This function will randomly select the _sample_per_iteration_ from the data set based on exp_id
+# and calculate the KL divergence between the SOA 67, 133 and 267.
+
+calculate_rnd_kl_divergence <- function(df, exp_id, sample_per_iteration) {
+  
+  df <- df[experiment_no == exp_id]
+  subject_list <- unique(df$subject)
+  sample_subjects <- sample(subject_list, sample_per_iteration, replace = FALSE)
+  sub_df <- df[subject %in% sample_subjects, ]
+
+  kl_df <- calculate_kl_for_dataframe(sub_df, TRUE)
+
+  sub_df <- sub_df[, .(soa_single_word_freq = sum(frequency)), by = c("img_id", "soa", "word")]
+  sub_df <- sub_df[, soa_total_words := sum(soa_single_word_freq), by = c("img_id", "soa")]
+  sub_df <- sub_df[, .(word_soa_proportion = soa_single_word_freq/soa_total_words, frequency = soa_single_word_freq), by = c("img_id", "soa", "word")]
+
+  img_soa <- unique(sub_df[!img_id %in% c(3, 9, 14), .N, by = c("img_id", "soa")][order(img_id)])
+  kl_divergence_df = data.table()
+
+  for (ri in unique(img_soa$img_id)) {
+      current_img_id = ri
+
+      t <- sub_df[img_id == current_img_id, .(img_id, soa, word, word_soa_proportion, frequency)]
+      #t <- t[!word %in% c("na", "none", "nothing", "nada", "dont-know", "-")]
+      t$soa <- as.factor(t$soa)
+
+      word_freq_factor <- reorder(t$word, t$frequency, sum)
+      word_freq_factor_df <- data.table(word = as.vector(names(attr(word_freq_factor, "scores"))), frequency = as.vector(unname(attr(word_freq_factor, "scores"))))
+
+      word_prop_df <- copy(t)
+      word_prop_df <- word_prop_df[, .(soa_single_word_freq = sum(frequency)), by = c("img_id", "soa", "word")]
+      word_prop_df <- word_prop_df[, soa_total_words := sum(soa_single_word_freq), by = c("img_id", "soa")]
+      word_prop_df <- word_prop_df[, .(word_soa_proportion = soa_single_word_freq/soa_total_words), by = c("img_id", "soa", "word")]
+
+      ggtitleimg <- function(title, imgid, soa, kl) {
+        return(ggtitle(paste0(title, ' (Image ', imgid, ', SOA = ', soa, ', KL = ', sprintf("%.2f", kl), ')')))
+      }
+
+      kl_67_133 <- compute_kl(NULL, word_prop_df, c("67", "133"), "word", "word_soa_proportion")
+      kl_133_267 <- compute_kl(NULL, word_prop_df, c("133", "267"), "word", "word_soa_proportion")
+      kl_67_267 <- compute_kl(NULL, word_prop_df, c("67", "267"), "word", "word_soa_proportion")
+
+      kl_divergence_df <- rbind(kl_divergence_df, data.frame(img_id = current_img_id,
+                                                             experiment_no = exp_id,
+                                                             soa_kl_67_133 = kl_67_133,
+                                                             soa_kl_133_267 = kl_133_267,
+                                                             soa_kl_67_267 = kl_67_267))
+  }
+  
+  kl_divergence_df = data.table(img_id = kl_df$img_id, soa_kl_67_133 = kl_df$kl_67_133, soa_kl_133_267 = kl_df$kl_133_267, soa_kl_67_267 = kl_df$kl_67_267)
+  return (kl_divergence_df)
+}
+```
+
+```{r include=TRUE, warning=TRUE, info=FALSE, message=FALSE, echo=FALSE}
+
+### LAB BASED 5+5
+
+library(arrangements)
+
+d1_lb_df <- lab_raw_stem_df[experiment_no == 1, ][!img_id %in% c(3, 9, 14)][, agg_word := stem_word]
+d1_mt_df <- mt_raw_stem_df[experiment_no == 1, ][!img_id %in% c(3, 9, 14)][, agg_word := stem_word]
+
+# Re-sync stem-words across dataset (stem word is a combination)
+all_images <- unique(d1_mt_df$img_id)
+
+for (img in all_images) {
+  for (s in c(67, 133, 267)) {
+    lb_df <- d1_lb_df[img_id == img & soa == s]
+    if (nrow(lb_df) > 0) {
+      s1 <- stem_words(d1_mt_df[img_id == img & soa == s]$word)
+      s2 <- stem_words(d1_lb_df[img_id == img & soa == s]$word)
+      
+      common_stem_words <- data.table(merge(s1, s2, by = c("stem_word"), all=FALSE))
+      
+      for (sw in unique(common_stem_words$stem_word)) {
+        sw_df <- common_stem_words[stem_word == sw, c("word.x", "word.y")]
+        combine_stem_words = paste0(unique(c(as.character(sw_df$word.x), as.character(sw_df$word.y))), collapse = ", ")
+        
+        d1_mt_df[img_id == img & soa == s & word %in% sw_df$word.x]$agg_word = combine_stem_words
+        d1_lb_df[img_id == img & soa == s & word %in% sw_df$word.y]$agg_word = combine_stem_words
+      }
+    }
+  }
+}
+
+ad1_lb_sbjs <- combinations(unique(d1_lb_df$subject), 10)
+d1_mt_sbjs <- combinations(unique(d1_mt_df$subject), 10, nsample = 100)
+
+#Pick random 50
+# d1_lb_sbjs <- d1_lb_sbjs[sample(1:nrow(d1_lb_sbjs), 50), ]
+# d1_mt_sbjs <- d1_mt_sbjs[sample(1:nrow(d1_mt_sbjs), 50), ]
+
+#d4_lab_9_online_1_df <- data.table()
+d1_online_10_online_10_df <- data.table()
+mt_df <- data.table()
+for (i in seq(from=1, to=nrow(d1_mt_sbjs), by=2)) {
+    kl_df_1 <- calculate_kl_for_dataframe(d1_mt_df[subject %in% d1_mt_sbjs[i, ], ], FALSE, aggregate_word = FALSE)
+    kl_df_2 <- calculate_kl_for_dataframe(d1_mt_df[subject %in% d1_mt_sbjs[i+1, ], ], FALSE, aggregate_word = FALSE)
+
+    # Normalise the columns before we calculate KL divergence (need to sum up to 1)
+    kl_total_word_soa_df <- kl_df_1[, .(total_word_soa_proportion = sum(word_soa_proportion)), by = c("img_id", "soa")]
+    kl_df_1 = merge(kl_df_1, kl_total_word_soa_df, all.x = TRUE, by = c("img_id", "soa"))
+    kl_df_1 <- kl_df_1[, .(word_soa_proportion_norm = word_soa_proportion/total_word_soa_proportion, dataset = "1"), by = c("img_id", "soa", "agg_word")]
+
+    kl_total_word_soa_df <- kl_df_2[, .(total_word_soa_proportion = sum(word_soa_proportion)), by = c("img_id", "soa")]
+    kl_df_2 = merge(kl_df_2, kl_total_word_soa_df, all.x = TRUE, by = c("img_id", "soa"))
+    kl_df_2 <- kl_df_2[, .(word_soa_proportion_norm = word_soa_proportion/total_word_soa_proportion, dataset = "2"), by = c("img_id", "soa", "agg_word")]
+
+    combine_kl_df <- rbind(kl_df_1, kl_df_2)
+
+    ## Iterate through each images
+    kl_stats_dt <- combine_kl_df[, .(kl = compute_kl_by_dataset(.BY, copy(.SD), c("1", "2") ,
+                                                               "agg_word", "word_soa_proportion_norm", print_plot = FALSE)
+    ), by = c("img_id", "soa")]
+
+    kl_stats_dt <- cbind(kl_stats_dt, iteration = paste(c(d1_mt_sbjs[i, ], "|", d1_mt_sbjs[i+1, ]), collapse = ","))
+    d1_online_10_online_10_df <- rbind(d1_online_10_online_10_df, kl_stats_dt)    
+}
+
+d1_lab_10_online_10_df <- data.table()
+mt_df <- data.table()
+for (i in seq(from=1, to=nrow(d1_mt_sbjs), by=1)) {
+  
+    kl_df_1 <- calculate_kl_for_dataframe(d1_lb_df[subject %in% d1_lb_sbjs, ], FALSE, aggregate_word = FALSE)
+    kl_df_2 <- calculate_kl_for_dataframe(d1_mt_df[subject %in% d1_mt_sbjs[i, ], ], FALSE, aggregate_word = FALSE)
+
+    # Normalise the columns before we calculate KL divergence (need to sum up to 1)
+    kl_total_word_soa_df <- kl_df_1[, .(total_word_soa_proportion = sum(word_soa_proportion)), by = c("img_id", "soa")]
+    kl_df_1 = merge(kl_df_1, kl_total_word_soa_df, all.x = TRUE, by = c("img_id", "soa"))
+    kl_df_1 <- kl_df_1[, .(word_soa_proportion_norm = word_soa_proportion/total_word_soa_proportion, dataset = "1"), by = c("img_id", "soa", "agg_word")]
+
+    kl_total_word_soa_df <- kl_df_2[, .(total_word_soa_proportion = sum(word_soa_proportion)), by = c("img_id", "soa")]
+    kl_df_2 = merge(kl_df_2, kl_total_word_soa_df, all.x = TRUE, by = c("img_id", "soa"))
+    kl_df_2 <- kl_df_2[, .(word_soa_proportion_norm = word_soa_proportion/total_word_soa_proportion, dataset = "2"), by = c("img_id", "soa", "agg_word")]
+
+    combine_kl_df <- rbind(kl_df_1, kl_df_2)
+
+    ## Iterate through each images
+    kl_stats_dt <- combine_kl_df[, .(kl = compute_kl_by_dataset(.BY, copy(.SD), c("1", "2") ,
+                                                               "agg_word", "word_soa_proportion_norm", print_plot = FALSE)
+    ), by = c("img_id", "soa")]
+
+    kl_stats_dt <- cbind(kl_stats_dt, iteration = paste(c(d1_lb_sbjs, "|", d1_mt_sbjs[i, ]), collapse = ","))
+    d1_lab_10_online_10_df <- rbind(d1_lab_10_online_10_df, kl_stats_dt)    
+}
+
+
+plot_kl_compare(d1_online_10_online_10_df, d1_lab_10_online_10_df)
+
+d1_lab_5_online_5_df = data.table()
+
+for (i in 1:nrow(d1_lb_sbjs)) {
+  # d1_mt_sbjs <- data.table(setdiff(unique(d1_lb_df$subject), d1_lb_sbjs[i,]))
+  # d1_mt_sbjs <- dcast(d1_mt_sbjs, . ~ V1, value.var="V1")[,-(c("."))]
+
+  for (j in 1:nrow(d1_mt_sbjs)) {
+    temp_df <- rbind(
+      d1_lb_df[subject %in% d1_lb_sbjs[i, ]],
+      d1_mt_df[subject %in% d1_mt_sbjs[j, ]]
+      #d1_lb_df[subject %in% d1_mt_sbjs[j, ]]
+    )
+
+    kl_df_1 <- calculate_kl_for_dataframe(d1_lb_df[subject %in% d1_lb_sbjs[i, ], ], FALSE, aggregate_word = FALSE)
+    kl_df_2 <- calculate_kl_for_dataframe(d1_mt_df[subject %in% d1_mt_sbjs[j, ], ], FALSE, aggregate_word = FALSE)
+    #kl_df_2 <- calculate_kl_for_dataframe(d1_lb_df[subject %in% d1_mt_sbjs[j, ], ], FALSE)
+
+    # Normalise the columns before we calculate KL divergence (need to sum up to 1)
+    kl_total_word_soa_df <- kl_df_1[, .(total_word_soa_proportion = sum(word_soa_proportion)), by = c("img_id", "soa")]
+    kl_df_1 = merge(kl_df_1, kl_total_word_soa_df, all.x = TRUE, by = c("img_id", "soa"))
+    kl_df_1 <- kl_df_1[, .(word_soa_proportion_norm = word_soa_proportion/total_word_soa_proportion, dataset = "1"), by = c("img_id", "soa", "agg_word")]
+
+    kl_total_word_soa_df <- kl_df_2[, .(total_word_soa_proportion = sum(word_soa_proportion)), by = c("img_id", "soa")]
+    kl_df_2 = merge(kl_df_2, kl_total_word_soa_df, all.x = TRUE, by = c("img_id", "soa"))
+    kl_df_2 <- kl_df_2[, .(word_soa_proportion_norm = word_soa_proportion/total_word_soa_proportion, dataset = "2"), by = c("img_id", "soa", "agg_word")]
+
+    ## Filter the larger dataset 1 to contain only SOA that matches smaller dataset 2
+    # img_soa_df <- unique(kl_df_2[, c("img_id", "soa")])
+    # kl_df_1 <- merge(kl_df_1, img_soa_df, by = c("img_id", "soa"))
+
+    combine_kl_df <- rbind(kl_df_1, kl_df_2)
+
+    ## Iterate through each images
+    kl_stats_dt <- combine_kl_df[, .(kl = compute_kl_by_dataset(.BY, copy(.SD), c("1", "2") ,
+                                                               "agg_word", "word_soa_proportion_norm", print_plot = FALSE)
+    ), by = c("img_id", "soa")]
+
+    kl_stats_dt <- cbind(kl_stats_dt, iteration = paste(c(d1_lb_sbjs[i, ], d1_mt_sbjs[j, ]), collapse = ","))
+    d1_lab_5_online_5_df <- rbind(d1_lab_5_online_5_df, kl_stats_dt)
+  }
+}
+
+save(d1_lab_5_online_5_df, file = "kl_divergence_d1_lab_5_online_5.RData")
+```
+
+```{r include=TRUE, warning=TRUE, info=FALSE, message=FALSE, echo=FALSE}
+
+### ONLINE BASED
+
+# library(arrangements)
+# 
+# d1_lb_df <- lab_raw_stem_df[experiment_no == 1, ][!img_id %in% c(3, 9, 14)]
+# d1_mt_df <- mt_raw_stem_df[experiment_no == 1, ][!img_id %in% c(3, 9, 14)]
+# 
+# d1_mt_sbjs <- combinations(unique(d1_mt_df$subject), length(unique(d1_mt_df$subject))-1)
+# #d1_lb_sbjs <- combinations(unique(d1_lb_df$subject), 1)
+# 
+# d4_online_n_online_1_df <- data.table()
+# 
+# for (i in 1:nrow(d1_mt_sbjs)) {
+#   d1_lb_sbjs <- data.table(setdiff(unique(d1_mt_df$subject), d1_mt_sbjs[i,]))
+#     
+#   for (j in 1:nrow(d1_lb_sbjs)) {
+#     temp_df <- rbind(
+#       d1_mt_df[subject %in% d1_mt_sbjs[i, ]],
+#       d1_mt_df[subject %in% d1_lb_sbjs[j, ]]
+#       #d1_lb_df[subject %in% d1_lb_sbjs[j, ]]
+#     )
+# 
+#     kl_df_1 <- calculate_kl_for_dataframe(d1_mt_df[subject %in% d1_mt_sbjs[i, ], ], FALSE)
+#     #kl_df_2 <- calculate_kl_for_dataframe(d1_lb_df[subject %in% d1_lb_sbjs[j, ], ], FALSE)
+#     kl_df_2 <- calculate_kl_for_dataframe(d1_mt_df[subject %in% d1_lb_sbjs[j, ], ], FALSE)
+# 
+#     # Normalise the columns before we calculate KL divergence (need to sum up to 1)
+#     kl_total_word_soa_df <- kl_df_1[, .(total_word_soa_proportion = sum(word_soa_proportion)), by = c("img_id", "soa")]
+#     kl_df_1 = merge(kl_df_1, kl_total_word_soa_df, all.x = TRUE, by = c("img_id", "soa"))
+#     kl_df_1 <- kl_df_1[, .(word_soa_proportion_norm = word_soa_proportion/total_word_soa_proportion, dataset = "1"), by = c("img_id", "soa", "agg_word")]
+#     
+#     kl_total_word_soa_df <- kl_df_2[, .(total_word_soa_proportion = sum(word_soa_proportion)), by = c("img_id", "soa")]
+#     kl_df_2 = merge(kl_df_2, kl_total_word_soa_df, all.x = TRUE, by = c("img_id", "soa"))
+#     kl_df_2 <- kl_df_2[, .(word_soa_proportion_norm = word_soa_proportion/total_word_soa_proportion, dataset = "2"), by = c("img_id", "soa", "agg_word")]
+# 
+#     ## Filter the larger dataset 1 to contain only SOA that matches smaller dataset 2
+#     img_soa_df <- unique(kl_df_2[, c("img_id", "soa")])
+#     kl_df_1 <- merge(kl_df_1, img_soa_df, by = c("img_id", "soa"))
+#     
+#     combine_kl_df <- rbind(kl_df_1, kl_df_2)
+#     
+#     ## Iterate through each images
+#     kl_stats_dt <- combine_kl_df[, .(kl = compute_kl_by_dataset(.BY, .SD, c("1", "2") , 
+#                                                                "agg_word", "word_soa_proportion_norm",
+#                                                                print_plot = TRUE)
+#     ), by = c("img_id", "soa")] 
+#    
+#     kl_stats_dt <- cbind(kl_stats_dt, iteration = paste(c(d1_mt_sbjs[i, ], d1_lb_sbjs[j, ]), collapse = ","))
+#     d4_online_n_online_1_df <- rbind(d4_online_n_online_1_df, kl_stats_dt)
+#   }
+# }
+
+#save(d4_online_n_lab_1_df, file = "kl_divergence_d4_online_n_lab_1.RData")
+
+```
+
+```{r include=TRUE, warning=TRUE, info=FALSE, message=FALSE, echo=FALSE}
+plot_kl_compare <- function(lab_9_online_1_df, lab_9_lab_1_df, labels = c("1", "2")) {
+  merge_df <- rbind(
+    cbind(lab_9_online_1_df, type = labels[1]),
+    cbind(lab_9_lab_1_df, type = labels[2])
+  )
+  
+  # plot_df <- melt(data = merge_df, id.vars = c("img_id", "type"), measure.vars = c("soa_kl_67_133", "soa_kl_133_267", "soa_kl_67_267", "soa_kl_133_67", "soa_kl_267_133", "soa_kl_267_67"), variable.name = "soa_pairs", value.name = "kl_divergence")
+  
+  plot_df <- merge_df
+  dodge <- position_dodge(width = 0.9)
+  g <- ggplot(plot_df, aes(x = soa, y = kl, fill = type)) +
+    #geom_violin() +
+    geom_violin(position = dodge) +
+    geom_boxplot(width=0.3, position = dodge, show.legend = FALSE) +
+    scale_y_continuous(expand = c(0, 0), limits = c(0.2, 1.1)) +
+  # scale_x_discrete(labels=c("67", "133", "267")) +
+    xlab("Presentation Duration") +
+    ylab("Jensen-Shannon Values") +
+    scale_fill_brewer(palette="Spectral")
+
+  t_67 <- compute_ks_test(merge_df, labels[1], labels[2], 67)
+  t_133 <- compute_ks_test(merge_df, labels[1], labels[2], 133)
+  t_267 <- compute_ks_test(merge_df, labels[1], labels[2], 267)
+   
+  print(t_67)
+  print(t_133)
+
+  # Perform ks-test on two distribution
+  return (g)
+
+}
+
+compute_ks_test <- function(df, type1, type2, s) {
+  return (ks.test(
+    df[type == type1 & soa == s, ]$kl, 
+    df[type == type2 & soa == s, ]$kl, 
+    ))
+}
+```
+
+```{r include=FALSE, warning=TRUE, info=FALSE, message=FALSE, echo=FALSE}
+# load(file = "kl_divergence_d1_lab_9_lab_1.RData")
+# load(file = "kl_divergence_d2_lab_9_lab_1.RData")
+# load(file = "kl_divergence_d3_lab_9_lab_1.RData")
+# load(file = "kl_divergence_d4_lab_9_lab_1.RData")
+# load(file = "kl_divergence_d1_lab_9_online_1.RData")
+# load(file = "kl_divergence_d2_lab_9_online_1.RData")
+# load(file = "kl_divergence_d3_lab_9_online_1.RData")
+# load(file = "kl_divergence_d4_lab_9_online_1.RData")
+# 
+# remove_outlier <- function(d) {
+#   return(d[!d$kl %in% boxplot.stats(d$kl)$out])
+# }
+# 
+# # d1_lab_9_lab_1_df <- remove_outlier(d1_lab_9_lab_1_df)
+# # d1_lab_9_online_1_df <- remove_outlier(d1_lab_9_online_1_df)
+# # 
+# # d2_lab_9_lab_1_df <- remove_outlier(d2_lab_9_lab_1_df)
+# # d2_lab_9_online_1_df <- remove_outlier(d2_lab_9_online_1_df)
+# # 
+# # d3_lab_9_lab_1_df <- remove_outlier(d3_lab_9_lab_1_df)
+# # d3_lab_9_online_1_df <- remove_outlier(d3_lab_9_online_1_df)
+# # 
+# # d4_lab_9_lab_1_df <- remove_outlier(d4_lab_9_lab_1_df)
+# # d4_lab_9_online_1_df <- remove_outlier(d4_lab_9_online_1_df)
+# 
+# d1_plot <- plot_kl_compare(d1_lab_9_online_1_df, d1_lab_9_lab_1_df)
+# #d1_plot <- plot_kl_compare(lab_9_online_1_df, lab_9_lab_1_df)
+# d1_sig <- d1_plot + geom_signif(y_position=c(0, 1.05, 0), xmin=c(0, 1.8, 0), xmax=c(0, 2.2, 0), annotation=c("", "*", ""), tip_length=0)
+# 
+# d2_plot <- plot_kl_compare(d2_lab_9_online_1_df, d2_lab_9_lab_1_df)
+# # d2_sig <- d2_plot + geom_signif(y_position=c(15.2, 15.2, 5), xmin=c(0.8, 1.8, 0), xmax=c(1.2, 2.2, 0), annotation=c("***", "*", ""), tip_length=0)
+# 
+# d3_plot <- plot_kl_compare(d3_lab_9_online_1_df, d3_lab_9_lab_1_df)
+# d3_sig <- d3_plot + geom_signif(y_position=c(1.05, 0, 1.05), xmin=c(0.8, 0, 2.8), xmax=c(1.2, 0, 3.2), annotation=c("***", "", "*"), tip_length=0)
+# 
+# d4_plot <- plot_kl_compare(d4_lab_9_online_1_df, d4_lab_9_lab_1_df)
+# d4_sig <- d4_plot + geom_signif(y_position=c(0, 1.05, 0), xmin=c(0, 1.8, 0), xmax=c(0, 2.2, 0), annotation=c("", "***", ""), tip_length=0)
+# 
+# g_all <- grid.arrange(
+#   d1_sig + scale_fill_discrete(name = "", labels=c("Lab_9_Lab_1", "Lab_9_Online_1")),
+#   d2_plot + scale_fill_brewer(palette="Accent", name = "", labels=c("Lab_9_Lab_1", "Lab_9_Online_1")),
+#   d3_sig + scale_fill_brewer(palette="Paired", name = "", labels=c("Lab_9_Lab_1", "Lab_9_Online_1")),
+#   d4_sig + scale_fill_brewer(palette="Set3", name = "", labels=c("Lab_9_Lab_1", "Lab_9_Online_1")),
+#   nrow = 2, ncol = 2)
+# 
+# # g_all <- grid.arrange(
+# #   d1_plot, 
+# #   d2_plot,
+# #   d3_plot, 
+# #   d4_plot,
+# #   nrow = 2, ncol = 2)
+# 
+# h <- 7
+# ar <- 1.5
+# ggsave(g_all, height=h, width= h*ar, filename = "comparison-lab-online-sampling.png")
+# 
+
+```
+
+```{r include=FALSE, warning=TRUE, info=FALSE, message=FALSE, echo=FALSE}
+load(file = "kl_divergence_d1_online_n_online_1.RData")
+load(file = "kl_divergence_d2_online_n_online_1.RData")
+load(file = "kl_divergence_d3_online_n_online_1.RData")
+load(file = "kl_divergence_d4_online_n_online_1.RData")
+load(file = "kl_divergence_d1_online_n_lab_1.RData")
+load(file = "kl_divergence_d2_online_n_lab_1.RData")
+load(file = "kl_divergence_d3_online_n_lab_1.RData")
+load(file = "kl_divergence_d4_online_n_lab_1.RData")
+
+load(file = "kl_divergence_d1_lab_5_lab_5.RData")
+load(file = "kl_divergence_d1_lab_5_online_5.RData")
+
+plot_kl_compare(d1_lab_5_lab_5_df, d1_lab_5_online_5_df)
+
+remove_outlier <- function(d) {
+  return(d[!d$kl %in% boxplot.stats(d$kl)$out])
+}
+
+# d1_lab_9_lab_1_df <- remove_outlier(d1_lab_9_lab_1_df)
+# d1_lab_9_online_1_df <- remove_outlier(d1_lab_9_online_1_df)
+# 
+# d2_lab_9_lab_1_df <- remove_outlier(d2_lab_9_lab_1_df)
+# d2_lab_9_online_1_df <- remove_outlier(d2_lab_9_online_1_df)
+# 
+# d3_lab_9_lab_1_df <- remove_outlier(d3_lab_9_lab_1_df)
+# d3_lab_9_online_1_df <- remove_outlier(d3_lab_9_online_1_df)
+# 
+# d4_lab_9_lab_1_df <- remove_outlier(d4_lab_9_lab_1_df)
+# d4_lab_9_online_1_df <- remove_outlier(d4_lab_9_online_1_df)
+
+label <- c("online_n-1_lab_1", "online_n-1_online_1")
+
+d1_plot <- plot_kl_compare(d1_online_n_lab_1_df, d1_online_n_online_1_df, labels = label)
+#d1_plot <- plot_kl_compare(lab_9_online_1_df, lab_9_lab_1_df)
+d1_sig <- d1_plot + geom_signif(y_position=c(0, 1.05, 0), xmin=c(0, 1.8, 0), xmax=c(0, 2.2, 0), annotation=c("", "*", ""), tip_length=0)
+
+d2_plot <- plot_kl_compare(d2_online_n_lab_1_df, d2_online_n_online_1_df, labels = label)
+# d2_sig <- d2_plot + geom_signif(y_position=c(15.2, 15.2, 5), xmin=c(0.8, 1.8, 0), xmax=c(1.2, 2.2, 0), annotation=c("***", "*", ""), tip_length=0)
+
+d3_plot <- plot_kl_compare(d3_online_n_lab_1_df, d3_online_n_online_1_df, labels = label)
+d3_sig <- d3_plot + geom_signif(y_position=c(1.05, 0, 1.05), xmin=c(0.8, 0, 2.8), xmax=c(1.2, 0, 3.2), annotation=c("***", "", "*"), tip_length=0)
+
+d4_plot <- plot_kl_compare(d4_online_n_lab_1_df, d4_online_n_online_1_df, labels = label)
+d4_sig <- d4_plot + geom_signif(y_position=c(0, 1.05, 0), xmin=c(0, 1.8, 0), xmax=c(0, 2.2, 0), annotation=c("", "***", ""), tip_length=0)
+
+# g_all <- grid.arrange(
+#   d1_sig + scale_fill_discrete(name = "", labels=c("Lab_9_Lab_1", "Lab_9_Online_1")),
+#   d2_plot + scale_fill_brewer(palette="Accent", name = "", labels=c("Lab_9_Lab_1", "Lab_9_Online_1")),
+#   d3_sig + scale_fill_brewer(palette="Paired", name = "", labels=c("Lab_9_Lab_1", "Lab_9_Online_1")),
+#   d4_sig + scale_fill_brewer(palette="Set3", name = "", labels=c("Lab_9_Lab_1", "Lab_9_Online_1")),
+#   nrow = 2, ncol = 2)
+
+g_all <- grid.arrange(
+  d1_plot,
+  d2_plot,
+  d3_plot,
+  d4_plot,
   nrow = 2, ncol = 2)
 
 h <- 7
 ar <- 1.5
-ggsave(g_all, height=h, width= h*ar, filename = "comparison-lab-online-confidence.png")
+ggsave(g_all, height=h, width= h*ar, filename = "comparison-online-lab-sampling-jensen-shannon.png")
+
+
 ```
 
-```{r compare kl-divergence with the same image and the same SOA}
+```{r include=FALSE, warning=TRUE, info=FALSE, message=FALSE, echo=FALSE}
+plot_kl_dataset <- function (d) {
+  no_of_iterations_to_run <- 50
+  sample_subject_no <- 10
 
-kl_lab_df <- copy(lab_raw_df)
-kl_lab_df <- kl_lab_df[, .(soa_single_word_freq = sum(frequency)), by = c("img_id", "soa", "word")]
-kl_lab_df <- kl_lab_df[, soa_total_words := sum(soa_single_word_freq), by = c("img_id", "soa")]
-kl_lab_df <- kl_lab_df[, .(word_soa_proportion = soa_single_word_freq/soa_total_words, frequency = soa_single_word_freq), by = c("img_id", "soa", "word")]
+  mt_bootstrap_df <- data.table()
 
-kl_mt_df <- copy(mt_raw_df)
-kl_mt_df <- kl_mt_df[, .(soa_single_word_freq = sum(frequency)), by = c("img_id", "soa", "word")]
-kl_mt_df <- kl_mt_df[, soa_total_words := sum(soa_single_word_freq), by = c("img_id", "soa")]
-kl_mt_df <- kl_mt_df[, .(word_soa_proportion = soa_single_word_freq/soa_total_words, frequency = soa_single_word_freq), by = c("img_id", "soa", "word")]
-
-## First we aggregate the LAB image and soa to see which combination we will compare against online
-lab_img_soa <- unique(lab_raw_df[, .N, by = c("img_id", "soa")][order(img_id)])
-total_kl <- 0
-
-for (ri in (1:nrow(lab_img_soa))) {
-
-  current_img_id = lab_img_soa[ri, ]$img_id
-  current_soa = lab_img_soa[ri, ]$soa
-  
-  t <- data.table(rbind(
-    kl_lab_df[img_id == current_img_id & soa == current_soa, .(img_id, soa = 1, word, word_soa_proportion, frequency)],
-    kl_mt_df[img_id == current_img_id & soa == current_soa, .(img_id, soa = 2, word, word_soa_proportion, frequency)]
-  ))
-  
-  t <- t[!word %in% c("na", "none", "nothing", "nada", "dont-know", "-")]
-
-  t$soa <- as.factor(t$soa)
-  levels(t$soa) <- c("Lab", "Online")
-
-  word_freq_factor <- reorder(t$word, t$frequency, sum)
-  word_freq_factor_df <- data.table(word = as.vector(names(attr(word_freq_factor, "scores"))), frequency = as.vector(unname(attr(word_freq_factor, "scores"))))
-  word_freq_factor_df <- word_freq_factor_df[frequency > 1]
-  words_above_threshold <- word_freq_factor_df$word
-  
-  word_prop_df <- copy(t)
-  word_prop_df <- word_prop_df[word %in% words_above_threshold]
-  word_prop_df <- word_prop_df[, .(soa_single_word_freq = sum(frequency)), by = c("img_id", "soa", "word")]
-  word_prop_df <- word_prop_df[, soa_total_words := sum(soa_single_word_freq), by = c("img_id", "soa")]
-  word_prop_df <- word_prop_df[, .(word_soa_proportion = soa_single_word_freq/soa_total_words), by = c("img_id", "soa", "word")]
-  
-  ggtitleimg <- function(title, imgid, soa, kl) {
-    return(ggtitle(paste0(title, ' (Image ', imgid, ', SOA = ', soa, ', KL = ', sprintf("%.2f", kl), ')')))
+  for (i in 1:no_of_iterations_to_run) {
+    kl_df <- calculate_rnd_kl_divergence(mt_raw_stem_df, d, sample_subject_no)
+    kl_df <- cbind(kl_df, iteration = i)
+    mt_bootstrap_df <- rbind(mt_bootstrap_df, kl_df)
   }
   
-  kl_div <- compute_kl(NULL, word_prop_df, c("Lab", "Online"), "word", "word_soa_proportion")
-  total_kl <- total_kl + kl_div
+  lb_kl_df <- calculate_rnd_kl_divergence(lab_raw_stem_df, d, sample_subject_no)
   
-  p <- ggplot(word_prop_df) + 
-    geom_histogram(stat = "identity") +
-    aes(x=reorder(word_prop_df$word, word_prop_df$word_soa_proportion, sum), y=word_soa_proportion, col=soa, fill = soa) +
-    coord_flip() +
-    ggtitleimg("Word proportion distribution by SOA ", current_img_id, current_soa, kl_div) +
-    xlab("Word") + 
-    ylab("Proportion") +
-    theme(axis.text = element_text(size = 6)) +
-    facet_grid(. ~ soa, ) 
+  plot_df <- mt_bootstrap_df[, .(img_id, soa_kl_67_133, soa_kl_67_267, soa_kl_133_267)]
+  plot_df <- melt(data = plot_df, id.vars = c("img_id"), measure.vars = c("soa_kl_67_133", "soa_kl_67_267", "soa_kl_133_267"), variable.name = "soa_pairs", value.name = "kl_divergence")
   
-  print(p)
-  ggsave(paste0("compare-lab-online-img-", current_img_id, '-soa-', current_soa, '.png'))
-}
+  lab_plot_df <- melt(data = lb_kl_df, id.vars = c("img_id"), measure.vars = c("soa_kl_67_133", "soa_kl_67_267", "soa_kl_133_267"), variable.name = "soa_pairs", value.name = "kl_divergence")
+  
+  t_67_133 <- ks.test(lb_kl_df$soa_kl_67_133, mt_bootstrap_df[, soa_kl_67_133, by = img_id]$soa_kl_67_133)
+  t_133_267 <- ks.test(lb_kl_df$soa_kl_133_267, mt_bootstrap_df[, soa_kl_133_267, by = img_id]$soa_kl_133_267)
+  t_67_267 <- ks.test(lb_kl_df$soa_kl_67_267, mt_bootstrap_df[, soa_kl_67_267, by = img_id]$soa_kl_67_267)
+   
+  warning(t_67_133$statistic)
+  warning("\n")
+  warning(t_67_133$p.value)
+  warning("\n")
+  warning(t_67_267$statistic)
+  warning("\n")
+  warning(t_67_267$p.value)
+  warning("\n")
+  warning(t_133_267$statistic)
+  warning("\n")
+  warning(t_133_267$p.value)
 
-sprintf("Average KL = %.4f", total_kl/nrow(lab_img_soa))
+  comb_plot_df <- plot_df[, `:=` (type = 'mturk')]
+  comb_plot_df <- rbind(comb_plot_df, lab_plot_df[, `:=` (type = 'lab')])
+  
+  dodge <- position_dodge(width = 0.8)
+  violin_all <- ggplot(comb_plot_df, aes(x = soa_pairs, y = kl_divergence, fill = type)) +
+    geom_violin(position = dodge) +
+    geom_boxplot(width=0.3, position = dodge, show.legend = FALSE) +
+    scale_x_discrete(labels=c("67-133", "67-267", "133-267")) +
+    xlab("") +
+    ylab("Jensen-Shannon Distance") +
+    ggtitle(sprintf("Dataset %d (Lab=%d, Online=%d)", d, 
+                    length(unique(lab_raw_stem_df[experiment_no == d]$subject)),
+                    length(unique(mt_raw_stem_df[experiment_no == d]$subject)))) +
+    scale_fill_brewer(palette="Spectral")
+  
+  return (violin_all)
+}
 ```
 
-```{r, warning=FALSE, message=FALSE, echo = TRUE}
+```{r include=FALSE, warning=TRUE, info=FALSE, message=FALSE, echo=FALSE}
+library(ggsignif)
 
-# Plot single image analysis
-theme_set(theme_minimal())
+#set.seed(12345)
+#set.seed(12345)
 
-#analyse_plot_single_image(master_raw_df, 1744, 1)
-#analyse_single_image_kl_divergence(master_raw_df, 1744)
+p1 <- plot_kl_dataset(1)
+p2 <- plot_kl_dataset(2)
+p3 <- plot_kl_dataset(3)
+p4 <- plot_kl_dataset(4)
 
-img_stem_plt_df <- copy(master_raw_stem_df)
-img_stem_plt_df <- img_stem_plt_df[is.na(confidence) | confidence != 0]
-img_stem_plt_df <- aggregate_word_column(img_stem_plt_df, c("img_id"))
-img_stem_plt_df$word <- img_stem_plt_df$agg_word
-img_stem_plt_df <- img_stem_plt_df[, -c("agg_word", "stem_word")]
+p4_sig <- p4 + geom_signif(y_position=c(1.02, 1.02, 1.02), xmin=c(0.8, 1.8, 2.8), xmax=c(1.2, 2.2, 3.2), annotation=c("*", "*", "*"), tip_length=0)
 
-for (i in unique(details_df$values.img_file)) {
-  
-  analyse_plot_single_image(img_stem_plt_df, get_image_id_by_filename(i), 1)
-  # plot_word_cloud_for_image(details_df, i, 67)
-  # plot_word_cloud_for_image(details_df, i, 133)
-  # plot_word_cloud_for_image(details_df, i, 267)
-}
+theme_set(theme_cowplot())
 
-#plot_word_cloud_for_image(details_df, "im0001744.jpg", 67)
-#plot_word_cloud_for_image(details_df, "im0001744.jpg", 133)
-#plot_word_cloud_for_image(details_df, "im0001744.jpg", 267)
+g_all <- grid.arrange(
+  p1 + scale_fill_discrete(name = "", labels=c("Lab", "Online")), 
+  p2 + scale_fill_brewer(palette="Accent", name = "", labels=c("Lab", "Online")),
+  p3 + scale_fill_brewer(palette="Paired", name = "", labels=c("Lab", "Online")), 
+  p4_sig + scale_fill_brewer(palette="Set3", name = "", labels=c("Lab", "Online")) + scale_y_continuous(limits = c(0.4, 1.05)),
+  nrow = 2, ncol = 2)
 
-ggplot(melt_kl_proportion_stats_dt[kl_type %in% c("kl_67_133", "kl_133_267", "kl_67_267")], aes(x = kl_value, fill = kl_type)) +
-  geom_density(alpha = 0.4)
+h <- 7
+ar <- 1.5
+ggsave(pp, height=h, width= h*ar, filename = "comparison-lab-online-violin-datasets-1.png")
 
-melt_kl_weighted_pror_stats_dt
+```
 
-plot(density(melt_kl_proportion_stats_dt$kl_value))
+## Goodness-of-fit test - Chi-squared
+
+Bootstrapped results (50 iterations, randomly select 10 MTurk participants in each iteration).
+
+```{r echo=FALSE, message=TRUE, warning=FALSE, fig.height=7, fig.width = 7*1.5}
+plot_df <- mt_bootstrap_df[, .(img_id, soa_kl_67_133, soa_kl_133_267, soa_kl_67_267)]
+plot_df <- melt(data = plot_df, id.vars = c("img_id"), measure.vars = c("soa_kl_67_133", "soa_kl_133_267", "soa_kl_67_267"), variable.name = "soa_pairs", value.name = "kl_divergence")
+
+mt <- ggplot(plot_df, aes(x = kl_divergence, color = soa_pairs)) + geom_density() + xlab("KL Divergence") +
+  ggtitle("MTurk Participants (Random 10 participants x 50)")
+
+lab_plot_df <- melt(data = lb_kl_df, id.vars = c("img_id"), measure.vars = c("soa_kl_67_133", "soa_kl_133_267", 
+"soa_kl_67_267"), variable.name = "soa_pairs", value.name = "kl_divergence")
+
+comb_plot_df <- plot_df[, `:=` (type = 'mturk')]
+comb_plot_df <- rbind(comb_plot_df, lab_plot_df[, `:=` (type = 'lab')])
+
+dodge <- position_dodge(width = 0.8)
+violin_all <- ggplot(comb_plot_df, aes(x = soa_pairs, y = kl_divergence, fill = type)) + 
+  geom_violin(position = dodge) +
+  geom_boxplot(width=0.3, position = dodge) +
+  scale_x_discrete(labels=c("67-133", "133-267", "67-267")) +
+  xlab("SOA Pairs") +
+  ylab("KL Divergence Values") +
+  ggtitle("Dataset 1") + 
+  scale_fill_brewer(palette="Spectral")
+
+lb <- ggplot(lab_plot_df, aes(x = kl_divergence, color = soa_pairs)) + geom_density() + xlab("KL Divergence") +
+  ggtitle("Lab Participants")
+
+g_all <- grid.arrange(
+  mt, lb,
+  nrow = 1, ncol = 2)
+
+h <- 7
+ar <- 1.5
+ggsave(g_all, height=h, width= h*ar, filename = "comparison-lab-online-bootstrap-dataset-1.png")
+
+h <- 7
+ar <- 1.5
+ggsave(violin_all, height=h, width= h*ar, filename = "comparison-lab-online-violin-dataset-1.png")
+
+```
+
+
+Calculate the median of MTurk participants and compare it with Lab participants using Goodness-of-Fit using Chi-squared.
+
+```{r echo=TRUE, message=TRUE, warning=FALSE}
+t_67_133 <- ks.test(lb_kl_df$soa_kl_67_133, mt_bootstrap_df[, soa_kl_67_133, by = img_id]$soa_kl_67_133)
+t_133_267 <- ks.test(lb_kl_df$soa_kl_133_267, mt_bootstrap_df[, soa_kl_133_267, by = img_id]$soa_kl_133_267)
+t_67_267 <- ks.test(lb_kl_df$soa_kl_67_267, mt_bootstrap_df[, soa_kl_67_267, by = img_id]$soa_kl_67_267)
+ 
+t_67_133
+t_133_267
+t_67_267
+
+
 ```

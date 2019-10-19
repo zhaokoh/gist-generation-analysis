@@ -23,8 +23,11 @@ source('function-validate_img_soa_group_numbers.R')
 ```
 
 ```{r configuration, include=FALSE}
-summary_file = '../../data/batch_2/gist_batch_v1_2_4_mt_summary.csv'
-details_file = '../../data/batch_2/gist_batch_v1_2_4_mt_raw-sc.csv'
+batch_no = "4"
+version = "1"
+
+summary_file = paste0('../../data/batch_', batch_no, '/gist_batch_v1_', batch_no, '_', version, '_mt_summary.csv')
+details_file = paste0('../../data/batch_', batch_no, '/gist_batch_v1_', batch_no, '_', version, '_mt_raw.csv')
 ```
 
 ```{r read-summary-details-df, echo=FALSE, message=FALSE, include = FALSE, warning=FALSE}

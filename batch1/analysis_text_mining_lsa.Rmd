@@ -1,0 +1,146 @@
+---
+title: "Analysis"
+subtitle: "Batch 1_1 (Imageset 1 Bucket 1) Analysis - `r format(Sys.time(), '%d %B, %Y')`"
+geometry: left=2cm,right=2cm,top=2cm,bottom=2cm
+output:
+  pdf_document:
+    latex_engine: xelatex
+  html_document:
+    df_print: paged
+header-includes: \usepackage{xcolor}
+---
+
+```{r include=FALSE, echo=FALSE, message=FALSE}
+source('embed_import_libraries.R')
+source('embed_configuration.R')
+
+# Functions
+source('function-analyse_plot_single_image.R')
+source('function-aggregate_word_column.R')
+source('function-compute_kl.R')
+source('function-compute_pairwise_kl.R')
+source('function-image_utilities.R')
+source('function-load_alon_descriptors.R')
+source('function-load_data.R')
+source('function-load_subject_data.R')
+source('function-plot_kl_divergence.R')
+source('function-plot_neighbors_custom.R')
+source('function-plot_word_cloud.R')
+source('function-validate_img_soa_group_numbers.R')
+```
+
+```{r load-variables-from-file-instead, echo=FALSE}
+# load(file = 'all.RData')
+```
+
+
+```{r ggplot exploratory analysis, warning=TRUE, message=TRUE, echo = FALSE}
+# ggtitleimg <- function(title, imgid) {
+#   return(ggtitle(paste0(title, ' (Image ', imgid, ')')))
+# }
+# 
+# master_raw_df$soa <- factor(master_raw_df$soa, levels=c("67", "133", "267", "Unlimited"))
+# 
+# # Filter to only images that we are interested (20 images in pilot + 3 practice images)
+# included_img_ids = unique(master_raw_df$img_id) 
+# master_raw_df <- master_raw_df[img_id %in% included_img_ids]
+# 
+# total_subjects <- length(unique(master_raw_df$subject))
+#   
+# print(paste0("Total participants: ", total_subjects))
+# print(paste0("Total images: ", length(included_img_ids)))
+# 
+# sanity_check_less_group_df <- master_raw_df[soa != 'Unlimited' & !img_id %in% c(3, 9, 14), length(unique(group)), by = c("img_id", "soa")][order(img_id, soa)][V1 < 10]
+# 
+# if (nrow(sanity_check_less_group_df) > 0) {
+#   print("Image SOAs that have less than 10 subjects/groups")
+#   print(sanity_check_less_group_df)
+# }
+# 
+# stopifnot(nrow(sanity_check_less_group_df) == 0)
+# 
+# # Here we provide the stemmed version of the master_raw_df (with word column replaced by the concatenate words that consider the same)
+# 
+# master_raw_stem_df <- cbind(master_raw_df, stem_word = stem_words(master_raw_df$word)$stem_word)
+```
+
+```{r }
+
+# master_raw_stem_df <- master_raw_stem_df[confidence > 0 & !img_id %in% c(3, 9, 14), ]
+# 
+# df_67 <- master_raw_stem_df[soa == 67,]
+# df_133 <- master_raw_stem_df[soa == 133,]
+# df_267 <- master_raw_stem_df[soa == 267,]
+# 
+# img_ids <- unique(df_67$img_id)
+# for (imgid in img_ids) {
+#   img_words <- paste(df_67[img_id == imgid, ]$stem_word, collapse=" ")
+#   write(img_words, file=paste("lsa", "67", imgid, sep="/"))
+# }
+# 
+# img_ids <- unique(df_133$img_id)
+# for (imgid in img_ids) {
+#   img_words <- paste(df_133[img_id == imgid, ]$stem_word, collapse=" ")
+#   write(img_words, file=paste("lsa", "133", imgid, sep="/"))
+# }
+# 
+# img_ids <- unique(df_267$img_id)
+# for (imgid in img_ids) {
+#   img_words <- paste(df_267[img_id == imgid, ]$stem_word, collapse=" ")
+#   write(img_words, file=paste("lsa", "267", imgid, sep="/"))
+# }
+```
+
+```{r }
+# library("LSAfun")
+# 
+# # Build LSA space
+# tm_67 <- textmatrix("lsa/67")
+# tm_133 <- textmatrix("lsa/133")
+# tm_267 <- textmatrix("lsa/267")
+# 
+# lsa_67 <- lsa(tm_67, dims=dimcalc_share())
+# lsa_133 <- lsa(tm_133, dims=dimcalc_share())
+# lsa_267 <- lsa(tm_267, dims=dimcalc_share())
+# 
+# lsm_67 <- as.textmatrix(lsa_67)
+# lsm_133 <- as.textmatrix(lsa_133)
+# lsm_627 <- as.textmatrix(lsa_267)
+# 
+# save.image(file="lsa.RData")
+```
+
+```{r }
+library("LSAfun")
+library("misc3d")
+load('lsa.RData')
+
+doc_67 <-as.textmatrix(lsa_67$dk)
+doc_133 <-as.textmatrix(lsa_133$dk)
+doc_267 <-as.textmatrix(lsa_267$dk)
+
+plot_neighbors_custom("41", n=20, tvectors=doc_67, method="MDS", dims=2)
+plot_neighbors_custom("41", n=20, tvectors=doc_133, method="MDS", dims=2)
+plot_neighbors_custom("41", n=20, tvectors=doc_267, method="MDS", dims=2)
+
+plot_neighbors("sky", n=20, tvectors=lsm_67, method = "MDS", dims = 3 , cex = 1.2)
+plot_neighbors("sky", n=20, tvectors=lsm_133, method = "MDS", dims = 2, cex = 1.2)
+plot_neighbors("sky", n=20, tvectors=lsm_627, method = "MDS", dims = 2, cex = 1.2)
+
+
+neighbors("human", n=20, tvectors=lsm)
+
+distance("man", "girl", tvectors=lsm, breakdown=FALSE)
+
+plot_wordlist(c("bowl"), tvectors=lsm, method="MDS", dims=2)
+
+choose.target("man", lower=.8, upper=.9, n=20, tvectors=lsm)
+
+genericSummary("cookies", k=1)
+
+multidocs(x=c("3"), y=c("9"), tvectors=lsm)
+
+```
+
+
+
