@@ -1,0 +1,463 @@
+---
+title: "Analysis - Word Types (General or Specific)"
+subtitle: "Prepared by Zhao - `r format(Sys.time(), '%d %B, %Y')`"
+geometry: left=2cm,right=2cm,top=2cm,bottom=2cm
+output:
+  pdf_document:
+    latex_engine: xelatex
+  html_document:
+    df_print: paged
+header-includes: \usepackage{xcolor}
+---
+
+```{r include=FALSE, echo=FALSE, message=FALSE}
+source('embed_import_libraries.R')
+source('embed_configuration.R')
+
+# Functions
+source('function-analyse_single_image_kl_divergence.R')
+source('function-analyse_plot_single_image.R')
+source('function-aggregate_word_column.R')
+source('function-calculate_kl_for_dataframe.R')
+source('function-compute_kl.R')
+source('function-compute_pairwise_kl.R')
+source('function-image_utilities.R')
+source('function-load_alon_descriptors.R')
+source('function-load_data.R')
+source('function-load_subject_data.R')
+source('function-plot_kl_divergence.R')
+source('function-plot_word_cloud.R')
+source('function-utilities.R')
+source('function-validate_img_soa_group_numbers.R')
+
+library("scales")
+```
+## Data Summary
+
+```{r configuration, echo=FALSE}
+load(file = "psy4100_master_data.RData")
+
+print(paste0("Total participants (includes Shinji's): ", total_subjects))
+print(paste0("Total participants (only MTurk): ", total_mturk_subjects))
+print(paste0("Total images (including 3 practice images):", length(included_img_ids)))
+```
+
+
+```{r, include=FALSE, echo=FALSE}
+## Analyse Don't Know confidence and Very Confident
+
+theme_set(theme_cowplot())
+
+confidence_df <- copy(master_raw_df)
+confidence_df <- confidence_df[soa != 'Unlimited' & !img_id %in% c(3, 9, 14)]
+confidence_df$soa <- as.numeric(paste(confidence_df$soa))
+confidence_df$img_id <- as.factor(confidence_df$img_id)
+```
+
+
+```{r, include=FALSE, echo=FALSE}
+### Determine the distribution of slope
+
+confidence_no_zero_df <- copy(master_raw_stem_df)
+confidence_no_zero_df <- confidence_no_zero_df[soa != 'Unlimited' & confidence > 0 & !img_id %in% c(3, 9, 14)]
+confidence_no_zero_df$soa <- as.numeric(paste(confidence_no_zero_df$soa))
+confidence_no_zero_df$img_id <- as.factor(confidence_no_zero_df$img_id)
+
+within_image_greater_than_one_word = confidence_no_zero_df[, .(within_soa_count = .N), by=c("img_id", "soa", "stem_word")][within_soa_count > 1]
+between_image_greater_than_one_word = within_image_greater_than_one_word[, .(between_soa_count = .N), by=c("img_id", "stem_word")][between_soa_count> 2]
+
+words_all_soas_reported_all_within_df <- merge(confidence_no_zero_df, between_image_greater_than_one_word, by = c("img_id", "stem_word"))
+words_all_soas_reported_all_within_df$img_id <- as.integer(paste(words_all_soas_reported_all_within_df$img_id ))
+words_all_soas_reported_all_within_df$soa <- as.numeric(words_all_soas_reported_all_within_df$soa)
+subject_prop_df <- copy(master_raw_stem_df)
+subject_prop_img_soa_df <- subject_prop_df[, .(soa_total_sbj_img_tested = length(unique(subject))), by = c("img_id", "soa")][soa != 'Unlimited']
+subject_prop_img_soa_df$soa <- as.numeric(paste(subject_prop_img_soa_df$soa))
+words_all_soas_reported_all_within_df <- merge(words_all_soas_reported_all_within_df, subject_prop_img_soa_df, by = c("img_id", "soa"))
+
+words_all_soas_prop_reported_all_within_df <- unique(words_all_soas_reported_all_within_df[, .(total_count = .N, prop_reported = sum(frequency)/soa_total_sbj_img_tested), by = c("img_id", "soa", "stem_word")])
+words_all_soas_avg_confidence_all_within_df <- unique(words_all_soas_reported_all_within_df[, .(total_count = .N, mean_confidence = mean(confidence)), by = c("img_id", "soa", "stem_word")])
+```
+
+```{r, include=FALSE, echo=FALSE}
+## START: Calculate Confidence
+unique_img_ids <- unique(words_all_soas_reported_all_within_df$img_id)
+conf_slope_df <- data.table()
+for (i in 1:length(unique_img_ids)) {
+#for (i in 1:1) {
+  current_img <- unique_img_ids[i]
+  unique_stem_words <- unique(words_all_soas_reported_all_within_df[img_id == current_img, ]$stem_word)
+
+  for (j in 1:length(unique_stem_words)) {
+    current_stem_word <- unique_stem_words[j]
+    sub_df <- words_all_soas_reported_all_within_df[img_id == current_img & stem_word == current_stem_word, ]
+
+    p <- ggplot(sub_df, aes(x=soa, y = confidence)) +
+      stat_summary(fun.data=mean_cl_normal) +
+      geom_smooth(method='lm', ) +
+      scale_x_log10(breaks = trans_breaks("log10", function(x) 10^x))
+    fitted <- ggplot_build(p)$data[[2]]
+    fitted_model <- lm(y~x, data = data.table(fitted))
+    slope <- as.numeric(fitted_model$coefficients['x'])
+
+    conf_slope_df <- rbind(conf_slope_df, data.table(img_id = current_img, stem_word = current_stem_word, slope = slope))
+  }
+}
+
+p <- ggplot(conf_slope_df, aes(x=conf_slope_df$slope)) + geom_histogram(bins = 60, fill="#CBCBCB") +
+  xlab("Slope of regression line") +
+  ylab("Total Count") +
+  geom_vline(xintercept = mean(conf_slope_df$slope), size=1, color = "black", linetype="dashed") +
+  geom_vline(xintercept = quantile(conf_slope_df$slope, 0.95), size=1, color = "red", linetype="dashed") +
+  geom_vline(xintercept = quantile(conf_slope_df$slope, 0.05), size=1, color = "red", linetype="dashed") +
+  theme_cowplot() +
+  theme(legend.text = element_text(size=16), axis.text = element_text(size = 22),
+  axis.title=element_text(size=22,face="bold"), plot.title = element_text(size = 20))
+
+lower_quantile <- quantile(conf_slope_df$slope, 0.05)
+lower_df <- conf_slope_df[slope < lower_quantile, ][order(-slope)]
+
+upper_quantile <- quantile(conf_slope_df$slope, 0.95)
+upper_df <- conf_slope_df[slope > upper_quantile, ][order(-slope)]
+
+h <- 7
+ar <- 1.5
+ggsave(p, height=h, width= h*ar, filename = "confidence_rate_of_change.png")
+
+## END: Calculate Confidence
+```
+
+## Using Slope to Categorise General vs Specific
+
+* Words included in this analysis were reported more than once in all presentation durations.
+* For each image and presentation duration, we calculated the proportion of participants who reported a word using (Total number of word occurrence)/(Total number of participants).
+* Then we fit a linear regression line and calculate the slope of the line.
+
+Here are some examples.
+
+```{r, echo=FALSE, fig.height = 3, fig.width = 5}
+
+plot_single_prop_slope_by_prop_reported <- function(input_img_id, xy_range, legend_pos, words_to_include) {
+  u_df <- words_all_soas_prop_reported_all_within_df[img_id == input_img_id &
+                                                    stem_word %in% words_to_include,
+                                                     # TRUE == TRUE,
+                                                    .(prop_reported),by=c("soa", "stem_word")]
+  
+  p <- ggplot(u_df, aes(x=soa, y=prop_reported, color=stem_word)) +
+        geom_point(size=4) +
+        geom_smooth(method='lm', se=F) +
+        scale_x_log10(breaks = trans_breaks("log10", function(x) 10^x, 3)) +
+        labs(x = "", y = "Prop. of sbjs who reported the word", colour = "Word") +
+        ggtitle(paste0("Image ID: ", input_img_id)) + 
+        theme_cowplot() +
+        theme(axis.text.x = element_blank()) +
+      theme(legend.title = element_blank(), legend.position=legend_pos,
+            axis.title=element_text(size=10,face="bold"), plot.title = element_text(size = 10))
+  
+  x_range <- ggplot_build(p)$layout$panel_params[[1]]$x.range
+  y_range <- ggplot_build(p)$layout$panel_params[[1]]$y.range
+  image <- image_scale(get_image_by_id(nishimoto_images_folder, input_img_id), "200")
+    
+  p_image <- p + annotation_custom(rasterGrob(image, interpolate = FALSE), 
+                        xmin = x_range[1]+xy_range[1], xmax = x_range[1] + xy_range[2], ymin = y_range[2] + xy_range[3], ymax = y_range[2] + xy_range[4])  +
+    coord_cartesian(clip = 'off') +
+    theme(plot.margin = unit(c(1,3,1,1), "lines"))
+  
+  return(p_image)
+}
+
+plot_single_prop_slope_by_confidence <- function(input_img_id, xy_range, legend_pos, words_to_include) {
+  u_df <- words_all_soas_avg_confidence_all_within_df[img_id == input_img_id &
+                                                    stem_word %in% words_to_include,
+                                                     # TRUE == TRUE,
+                                                    .(mean_confidence),by=c("soa", "stem_word")]
+  
+  p <- ggplot(u_df, aes(x=soa, y=mean_confidence, color=stem_word)) +
+        geom_point(size=4) +
+        geom_smooth(method='lm', se=F) +
+        scale_x_log10(breaks = trans_breaks("log10", function(x) 10^x, 3)) +
+        labs(x = "", y = "Avg confidence of the word", colour = "Word") +
+        ggtitle(paste0("Image ID: ", input_img_id)) + 
+        theme_cowplot() +
+        theme(axis.text.x = element_blank()) +
+      theme(legend.title = element_blank(), legend.position=legend_pos,
+            axis.title=element_text(size=10,face="bold"), plot.title = element_text(size = 10))
+  
+  x_range <- ggplot_build(p)$layout$panel_params[[1]]$x.range
+  y_range <- ggplot_build(p)$layout$panel_params[[1]]$y.range
+  image <- image_scale(get_image_by_id(nishimoto_images_folder, input_img_id), "200")
+     
+  p_image <- p + annotation_custom(rasterGrob(image, interpolate = FALSE), 
+                        xmin = x_range[1]+xy_range[1], xmax = x_range[1] + xy_range[2], ymin = y_range[2] + xy_range[3], ymax = y_range[2] + xy_range[4])  +
+    coord_cartesian(clip = 'off') +
+    theme(plot.margin = unit(c(1,3,1,1), "lines"))
+  
+  return(p_image)
+}
+```
+
+```{r, }
+## Obama
+p_image <- plot_single_prop_slope_by_prop_reported(4865, c(0.55, 0.75, -0.2, -0.1), c(0.8, 0.2), c("obama", "president", "speech"))
+print(p_image)
+p_image <- plot_single_prop_slope_by_confidence(4865, c(0.55, 0.75, -0.2, -0.1), c(0.8, 0.2), c("obama", "president", "speech"))
+print(p_image)
+```
+
+
+```{r, echo=FALSE}
+## Pear
+p_image <- plot_single_prop_slope_by_prop_reported(2260, c(0.55, 0.75, -0.2, -0.1), c(0.8, 0.2), c("fruit", "pear"))
+print(p_image)
+p_image <- plot_single_prop_slope_by_confidence(2260, c(0.55, 0.75, -0.2, -0.1), c(0.8, 0.2), c("fruit", "pear"))
+print(p_image)
+```
+
+```{r, echo=FALSE}
+## Cruise ship
+p_image <- plot_single_prop_slope_by_prop_reported(1229, c(0.55, 0.75, -0.2, -0.1), c(0.8, 0.2), c("cruise", "ship"))
+print(p_image)
+p_image <- plot_single_prop_slope_by_confidence(1229, c(0.55, 0.75, -0.2, -0.1), c(0.8, 0.2), c("cruise", "ship"))
+print(p_image)
+```
+
+```{r, echo=FALSE}
+img_id <- 988
+words <- c("clock", "digital", "time")
+p_image <- plot_single_prop_slope_by_prop_reported(img_id, c(0.55, 0.75, -0.2, -0.1), c(0.8, 0.2), words)
+print(p_image)
+p_image <- plot_single_prop_slope_by_confidence(img_id, c(0.55, 0.75, -0.2, -0.1), c(0.8, 0.2), words)
+print(p_image)
+```
+
+
+
+We repeated the steps above for all images and calculated the slopes. The histogram below shows the distribution of the slopes.
+
+```{r, echo=FALSE}
+## START: Calculate Proportion Reported
+
+# unique_img_ids <- unique(words_all_soas_prop_reported_all_within_df$img_id)
+# prop_slope_df <- data.table()
+# for (i in 1:length(unique_img_ids)) {
+# #for (i in 1:1) {
+#   current_img <- unique_img_ids[i]
+#   unique_stem_words <- unique(words_all_soas_prop_reported_all_within_df[img_id == current_img, ]$stem_word)
+#   
+#   for (j in 1:length(unique_stem_words)) {
+#     current_stem_word <- unique_stem_words[j]
+#     sub_df <- words_all_soas_prop_reported_all_within_df[img_id == current_img & stem_word == current_stem_word, ]
+#     
+#     p <- ggplot(sub_df, aes(x=soa, y = prop_reported)) + 
+#       geom_smooth(method='lm', ) +
+#       scale_x_log10(breaks = trans_breaks("log10", function(x) 10^x))
+#     fitted <- ggplot_build(p)$data[[1]]
+#     fitted_model <- lm(y~x, data = data.table(fitted))
+#     slope <- as.numeric(fitted_model$coefficients['x'])
+#     
+#     prop_slope_df <- rbind(prop_slope_df, data.table(img_id = current_img, stem_word = current_stem_word, slope = slope))
+#   }
+# }
+
+load('prop_slope_df.RData')
+
+p <- ggplot(prop_slope_df, aes(x=prop_slope_df$slope)) + geom_histogram(bins=20, fill="#CBCBCB") +
+  xlab("Slope of regression line") +
+  ylab("Total Count") +
+  geom_vline(xintercept = mean(prop_slope_df$slope), size=1, color = "black", linetype="dashed") +
+  geom_vline(xintercept = quantile(prop_slope_df$slope, 0.95), size=1, color = "red", linetype="dashed") +
+  geom_vline(xintercept = quantile(prop_slope_df$slope, 0.05), size=1, color = "red", linetype="dashed") +
+  theme_cowplot() +
+  theme(legend.text = element_text(size=16), axis.text = element_text(size = 22),
+  axis.title=element_text(size=22,face="bold"), plot.title = element_text(size = 20)) 
+
+lower_quantile <- quantile(prop_slope_df$slope, 0.05)
+lower_df <- prop_slope_df[slope < lower_quantile, ][order(-slope)]
+
+upper_quantile <- quantile(prop_slope_df$slope, 0.95)
+upper_df <- prop_slope_df[slope > upper_quantile, ][order(-slope)]
+
+h <- 7
+ar <- 1.5
+ggsave(p, height=h, width= h*ar, filename = "proportion_rate_of_change.png")
+
+print(p)
+
+# Find out the high count slope
+
+## END: Calculate Confidence
+
+# a<-more_than_one_confidence_df[img_id == 2877 & !is.na(confidence) & confidence != 0, .(mean_conf = mean(confidence), total = .N), by=c("stem_word", "soa")][order(soa, mean_conf, -total)]
+# b<-a[order(soa,mean_conf,-total)]
+
+
+# u_df <- words_all_soas_more_than_once_within_df[img_id == 4865 & stem_word %in% c("president", "obama"), .(mean_confidence = mean(confidence)),by=c("soa", "stem_word")]
+
+
+## ----------- START: Individual confidence -------------
+
+# input_img_id <- 589
+# u_df <- words_all_soas_reported_all_within_df[img_id == input_img_id &
+#                                                   !stem_word %in% c("sit", "smile", "talk"),
+#                                                   .(mean_confidence = mean(confidence)),by=c("soa", "stem_word")]
+# 
+# p <- ggplot(u_df, aes(x=soa, y=mean_confidence, color=stem_word)) +
+#       geom_point(size=6) +
+#       stat_summary(fun.data=mean_cl_normal) + 
+#       geom_smooth(method='lm', se=F) +
+#       scale_x_log10(breaks = trans_breaks("log10", function(x) 10^x, 3)) +
+#       scale_y_continuous(limits=c(1, 4)) +
+#       labs(x = "", y = "Mean Confidence Rating", colour = "Word") +
+#       theme_cowplot() +
+#       theme(axis.text.x = element_blank()) +
+#     theme(legend.title = element_blank(), legend.text = element_text(size=26), axis.text = element_text(size = 26), legend.position=c(0., 0.2),        axis.title=element_text(size=26,face="bold"), plot.title = element_text(size = 20))
+# 
+# h <- 7
+# ar <- 1.5
+# ggsave(p, height=h, width= h*ar, filename = paste0("confidence_rate_of_change_", input_img_id, ".png"))
+
+## ----------- END: Individual confidence -------------
+
+```
+
+```{r, include=FALSE, echo=FALSE}
+## Proportion Reported
+
+## ----------- START: Individual proportion rate of change -------------
+
+# input_img_id <- 2260
+# u_df <- words_all_soas_prop_reported_all_within_df[img_id == input_img_id &
+#                                                   !stem_word %in% c("sky","tree"),
+#                                                    # TRUE == TRUE,
+#                                                   .(prop_reported),by=c("soa", "stem_word")]
+# 
+# p <- ggplot(u_df, aes(x=soa, y=prop_reported, color=stem_word)) +
+#       geom_point(size=6) +
+#       #stat_summary(fun.data=mean_cl_normal) + 
+#       geom_smooth(method='lm', se=F) +
+#       scale_x_log10(breaks = trans_breaks("log10", function(x) 10^x, 3)) +
+#       #scale_y_continuous(limits=c(1, 4)) +
+#       labs(x = "", y = "Prop. of sbjs who reported the word", colour = "Word") +
+#       theme_cowplot() +
+#       theme(axis.text.x = element_blank()) +
+#     theme(legend.title = element_blank(), legend.text = element_text(size=26), axis.text = element_text(size = 26), legend.position=c(0.2, 0.2),    
+#           axis.title=element_text(size=24,face="bold"), plot.title = element_text(size = 20))
+# rni
+# h <- 7
+# ar <- 1.5
+# ggsave(p, height=h, width= h*ar, filename = paste0("proportion_rate_of_change_", input_img_id, ".png"))
+
+## ----------- END: Individual proportion rate of change -------------
+     
+```
+
+The black-dashed line is the median and red-dashed lines are 5% and 95% percentiles accordingly.
+
+The bin size is 60.
+
+## Inspecting why some bins have high number of total count 
+
+### Between [-0.02, 0.02]
+
+```{r, echo=FALSE, fig.height = 3, fig.width = 5}
+p_data_df <- data.table(ggplot_build(p)[[1]][[1]])
+top_high_count_df <- head(p_data_df[count > 25][order(-count)], 1)
+
+knitr::render_markdown(paste0("#### Slope between [", top_high_count_df$xmin, ", ", top_high_count_df$xmax))
+
+imgs <- prop_slope_df[prop_slope_df$slope >= top_high_count_df$xmin & prop_slope_df$slope <= top_high_count_df$xmax, ]
+uniq_img_ids <- unique(imgs$img_id)
+
+for (curr_img_index in 1:length(uniq_img_ids)) {
+  if (curr_img_index > 10) {
+    break
+  }
+
+  curr_img_id <- uniq_img_ids[curr_img_index]
+  words <- paste0(imgs[img_id == curr_img_id, ]$stem_word)
+  
+  p_image <- plot_single_prop_slope(curr_img_id, c(0.55, 0.75, -0.1, 0), c(0.9, 0.7), words)
+  print(p_image)
+  
+  cat("  \n")
+  cat("  \n")
+}
+```
+
+## Slope values in the 5% percentile
+
+```{r, echo=FALSE, fig.height = 3, fig.width = 5}
+imgs <- prop_slope_df[prop_slope_df$slope <= quantile(prop_slope_df$slope, 0.05), ]
+uniq_img_ids <- unique(imgs$img_id)
+
+for (curr_img_index in 1:length(uniq_img_ids)) {
+  if (curr_img_index > 20) {
+    break
+  }
+
+  curr_img_id <- uniq_img_ids[curr_img_index]
+  words <- paste0(imgs[img_id == curr_img_id, ]$stem_word)
+  
+  p_image <- plot_single_prop_slope(curr_img_id, c(0.55, 0.75, -0.1, 0), c(0.9, 0.7), words)
+  print(p_image)
+  
+  cat("  \n")
+  cat("  \n")
+}
+```  
+
+## Slope values in the 95% percentile
+
+```{r, echo=FALSE, fig.height = 3, fig.width = 5}
+imgs <- prop_slope_df[prop_slope_df$slope >= quantile(prop_slope_df$slope, 0.95), ]
+uniq_img_ids <- unique(imgs$img_id)
+
+for (curr_img_index in 1:length(uniq_img_ids)) {
+  if (curr_img_index > 20) {
+    break
+  }
+
+  curr_img_id <- uniq_img_ids[curr_img_index]
+  words <- paste0(imgs[img_id == curr_img_id, ]$stem_word)
+  
+  p_image <- plot_single_prop_slope(curr_img_id, c(0.55, 0.75, -0.1, 0), c(0.9, 0.7), words)
+  print(p_image)
+  
+  cat("  \n")
+  cat("  \n")
+}
+```
+
+
+## Images that have words in 5% and 95% percentile
+
+```{r, echo=FALSE, fig.height = 3, fig.width = 5}
+imgs1 <- prop_slope_df[prop_slope_df$slope <= quantile(prop_slope_df$slope, 0.05), ]
+imgs2 <- prop_slope_df[prop_slope_df$slope >= quantile(prop_slope_df$slope, 0.95), ]
+merge_imgs <- merge(imgs1, imgs2, all=FALSE, by=c("img_id"))
+
+uniq_img_ids <- unique(merge_imgs$img_id)
+
+for (curr_img_index in 1:length(uniq_img_ids)) {
+  if (curr_img_index > 20) {
+    break
+  }
+
+  curr_img_id <- uniq_img_ids[curr_img_index]
+  words <- c(
+    paste0(merge_imgs[img_id == curr_img_id, ]$stem_word.x),
+    paste0(merge_imgs[img_id == curr_img_id, ]$stem_word.y))
+  
+  p_image <- plot_single_prop_slope(curr_img_id, c(0.55, 0.75, -0.1, 0), c(0.9, 0.7), words)
+  print(p_image)
+  
+  cat("  \n")
+  cat("  \n")
+}
+```  
+
+```{r, }
+load("prop_slope_df.RData")
+write.csv(prop_slope_df, "word_generation_slope_by_report_proportion.csv")
+load("conf_slope_df.RData")
+write.csv(prop_slope_df, "word_generation_slope_by_avg_confidence_proportion.csv")
+```
