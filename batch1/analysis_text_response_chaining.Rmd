@@ -1,0 +1,168 @@
+---
+title: "Analysis"
+subtitle: "Text Correlation"
+geometry: left=2cm,right=2cm,top=2cm,bottom=2cm
+output:
+  pdf_document:
+    latex_engine: xelatex
+  html_document:
+    df_print: paged
+header-includes: \usepackage{xcolor}
+---
+
+```{r include=FALSE, echo=FALSE, message=FALSE}
+source('embed_import_libraries.R')
+source('embed_configuration.R')
+
+# Functions
+source('function-analyse_plot_single_image.R')
+source('function-aggregate_word_column.R')
+source('function-compute_kl.R')
+source('function-compute_pairwise_kl.R')
+source('function-image_utilities.R')
+source('function-load_alon_descriptors.R')
+source('function-load_data.R')
+source('function-load_subject_data.R')
+source('function-plot_kl_divergence.R')
+source('function-plot_word_cloud.R')
+source('function-validate_img_soa_group_numbers.R')
+```
+## Overview
+
+This report is to calculate the response chaining probability in gist generation (as described in 'The "Small World of Words" English word association norms for over 12,000 cue words')
+
+```{r load-variables-from-file-instead, echo=FALSE}
+batch_no = "all"
+version = "all"
+batch_number = "V1_all"
+
+exp_group_number = 30
+exp_image_number = 21
+
+#load(file = 'all.RData')
+load(file = "psy4100_master_data.RData")
+
+# master_raw_df contains the full list
+
+word_list <- c()
+for (imgid in unique(master_raw_df$img_id)) {
+  word_list <- c(word_list, 
+                 paste(master_raw_df[img_id == imgid]$word, collapse = " "))
+}
+  
+docs <- VCorpus(VectorSource(word_list))
+
+toSpace <- content_transformer(function (x , pattern) gsub(pattern, " ", x))
+docs <- tm_map(docs, toSpace, "/")
+docs <- tm_map(docs, toSpace, "@")
+docs <- tm_map(docs, toSpace, "\\|")
+docs <- tm_map(docs, content_transformer(tolower))
+docs <- tm_map(docs, stripWhitespace)
+docs <- tm_map(docs, removeNumbers)
+#docs <- tm_map(docs, removeWords, c("nada", "nothing", "na", "none"))
+#docs <- tm_map(docs, lemmatize_strings, language = "english")
+  
+```
+
+First, we construct a "Term Document Matrix" where each row is a word and a column is an image. So the size of the matrix is 8873x423. Note the sparsity of the matrix is 99%.
+
+```{r }
+tdm <- TermDocumentMatrix(docs, control=list(wordLengths=c(1,Inf)))
+# tdm
+
+tdm_matrix <- as.matrix(tdm)
+tdm_df <- as.data.frame(tdm_matrix)
+
+bool_tdm_df <- data.table(tdm_df)
+bool_tdm_df[bool_tdm_df > 0] <- 1
+matrix_tdm_df <- as.matrix(bool_tdm_df)
+
+all_words <- tdm$dimnames$Terms
+word_size <- length(all_words)
+
+bool_tdm_df <- cbind(bool_tdm_df, as.data.table(x = all_words))
+setkey(bool_tdm_df, "all_words")
+
+cond_prob_1 <- matrix(nrow = word_size, ncol = word_size)
+cond_prob_2 <- matrix(nrow = word_size, ncol = word_size)
+
+cond_prob_1_parallel <- matrix(nrow = word_size, ncol = word_size)
+cond_prob_2_parallel <- matrix(nrow = word_size, ncol = word_size)
+
+total_words <- nrow(tdm)
+total_images <- ncol(tdm)
+```
+
+```{r, echo = FALSE, warning=FALSE, message=FALSE}
+library(BayesFactor)
+
+calc_bayes_factor_contigency_table <- function(tdm_matrix, w1, w2) {
+  all_imgs <- seq(1:423)
+  img_ids_1 <- as.integer(which(tdm_matrix[w1, ] > 0))
+  img_ids_2 <- as.integer(which(tdm_matrix[w2, ] > 0))
+  
+  w1_w2 <- length(intersect(img_ids_1, img_ids_2))
+  w1_not_w2 <- length(setdiff(img_ids_1, img_ids_2))
+  not_w1_w2 <- length(setdiff(img_ids_2, img_ids_1))
+  not_w1_not_w2 <- length(setdiff(all_imgs, unique(cbind(img_ids_1, img_ids_2))))
+  
+  w1_row <- as.array(c(w1_w2, w1_not_w2))
+  not_w1_row <- as.array(c(not_w1_w2, not_w1_not_w2))
+  # w1_row <- as.array(c(162, 196))
+  # not_w1_row <- as.array(c(110, 247))
+  contigency_matrix <- as.matrix(rbind(w1_row, not_w1_row))
+  rownames(contigency_matrix) <- c('w1', 'not_w1')
+  colnames(contigency_matrix) <- c('w2', 'not_w2')
+  
+  #t <- xtabs(~ not_w2 + w2, data.frame(contigency_matrix))
+  bayes <- contingencyTableBF(contigency_matrix, sampleType = "jointMulti")
+  
+  return (bayes)
+}
+
+bayes_factor_df <- data.table()
+
+for (w1 in all_words) {
+  print(sprintf("Processing word %s...", w1))
+  
+  for (w2 in all_words) {
+    if (w1 != w2) {
+      b <- calc_bayes_factor_contigency_table(tdm_matrix, 'people', 'human')
+      bf <- exp(b@bayesFactor$bf)
+      error <- b@bayesFactor$error
+      
+      bayes_factor_df <- rbind(bayes_factor_df, data.table(word1 = w1, word2 = w2, bf = bf, error = error))
+    }
+  }
+}
+```
+
+
+```{r }
+library(parallel)
+library(MASS)
+library(foreach)
+library(doParallel)
+
+dim_range_x <- 1:length(all_words)
+numCores <- detectCores()
+numCores
+registerDoParallel(numCores-1) 
+
+bayes_factor_df <- data.table()
+
+result <- foreach (i=dim_range_x, .combine=rbind) %dopar% {
+  for (w2 in all_words) {
+    if (w1 != w2) {
+      b <- calc_bayes_factor_contigency_table(tdm_matrix, w1, w2)
+      bf <- exp(b@bayesFactor$bf)
+      error <- b@bayesFactor$error
+      
+      data.table(word1 = w1, word2 = w2, bf = bf, error = error)
+    }
+  }
+}
+
+#result
+stopImplicitCluster()
+```

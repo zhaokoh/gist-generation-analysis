@@ -1,0 +1,172 @@
+---
+title: "Analysis - Word Frequencies"
+subtitle: "Prepared by Zhao - `r format(Sys.time(), '%d %B, %Y')`"
+geometry: left=2cm,right=2cm,top=2cm,bottom=2cm
+output:
+  pdf_document:
+    latex_engine: xelatex
+  html_document:
+    df_print: paged
+header-includes: \usepackage{xcolor}
+---
+
+```{r include=FALSE, echo=FALSE, message=FALSE, warning=FALSE}
+source('embed_import_libraries.R')
+source('embed_configuration.R')
+
+# Functions
+source('function-analyse_single_image_kl_divergence.R')
+source('function-analyse_plot_single_image.R')
+source('function-aggregate_word_column.R')
+source('function-calculate_kl_for_dataframe.R')
+source('function-compute_kl.R')
+source('function-compute_pairwise_kl.R')
+source('function-image_utilities.R')
+source('function-load_alon_descriptors.R')
+source('function-load_data.R')
+source('function-load_subject_data.R')
+source('function-plot_kl_divergence.R')
+source('function-plot_word_cloud.R')
+source('function-utilities.R')
+source('function-validate_img_soa_group_numbers.R')
+
+library("scales")
+```
+
+## Data Summary
+
+```{r configuration, echo=FALSE, warning=FALSE}
+load(file = "psy4100_master_data.RData")
+
+print(paste0("Total participants (includes Shinji's): ", total_subjects))
+print(paste0("Total participants (only MTurk): ", total_mturk_subjects))
+print(paste0("Total images (including 3 practice images):", length(included_img_ids)))
+```
+
+```{r, echo=FALSE, warning=FALSE}
+## All words
+valid_words_df = master_raw_stem_df[confidence > 0 & !img_id %in% c(3, 9 ,14), ]
+valid_words_df$img_id = factor(valid_words_df$img_id)
+
+total_subject_words_df <- master_raw_stem_df[, by=c("img_id", "soa", "word", )]
+
+## Zipf law
+library(ggplot2)
+library(dplyr)
+library(gganimate)
+
+word_count <- valid_words_df[,.(word_count = .N), by = "stem_word"][order(-word_count)]
+colnames(word_count) <- c("word", "count")
+
+word_count_67 <- valid_words_df[soa==67,.(word_count = .N), by = "stem_word"][order(-word_count)]
+colnames(word_count_67) <- c("word", "count")
+
+word_count_133 <- valid_words_df[soa==133,.(word_count = .N), by = "stem_word"][order(-word_count)]
+colnames(word_count_133) <- c("word", "count")
+
+word_count_267 <- valid_words_df[soa==267,.(word_count = .N), by = "stem_word"][order(-word_count)]
+colnames(word_count_267) <- c("word", "count")
+
+alpha <- 1
+word_count <- word_count %>%
+ mutate(word = factor(word, levels = word),
+        rank = row_number(),
+        zipfs_freq = ifelse(rank == 1, count, dplyr::first(count) / rank^alpha))
+word_count_67 <- word_count_67 %>%
+ mutate(word = factor(word, levels = word),
+        rank = row_number(),
+        zipfs_freq = ifelse(rank == 1, count, dplyr::first(count) / rank^alpha))
+word_count_133 <- word_count_133 %>%
+ mutate(word = factor(word, levels = word),
+        rank = row_number(),
+        zipfs_freq = ifelse(rank == 1, count, dplyr::first(count) / rank^alpha))
+word_count_267 <- word_count_267 %>%
+ mutate(word = factor(word, levels = word),
+        rank = row_number(),
+        zipfs_freq = ifelse(rank == 1, count, dplyr::first(count) / rank^alpha))
+```
+
+## Top 10 **most** commonly reported words
+```{r, echo=FALSE, warning=FALSE}
+head(data.table(word_count)[, .(word, count, rank)], 10)
+
+```
+
+## Top 10 **least** commonly reported words
+```{r, echo=FALSE, warning=FALSE}
+bottom_rank <- data.table(word_count)[count>=1 & count<=10][!word %like% "-,"]
+rnd_10_per_rank_df <- bottom_rank[bottom_rank[,.(rnd_row_index = .I[sample(.N, 10)]),by=c("count")]$rnd_row_index]
+rnd_10_df <- rnd_10_per_rank_df[,.(sample_words = toString(.SD$word)) ,by=c("count")]
+
+rnd_10_df
+```
+
+```{r, echo=FALSE, warning=FALSE}
+library(ggrepel)
+
+## THIS SETS THE DATA
+target_data <- word_count
+
+zipfs_plot <- ggplot(target_data, aes(x = rank, y = count)) + 
+  geom_point(stat="identity", aes(color = "observed")) +
+  geom_text_repel(data=subset(target_data, rank <= 20), aes(label=word), alpha = .8)+
+  ylab("frequency") +
+  theme_bw()
+
+h <- 7
+ar <- 1.5
+ggsave(zipfs_plot, height=h, width= h*ar, filename = "zipfs_full_all_soa.png")
+
+zipfs_restrict_x <- zipfs_plot + scale_x_continuous(limits = c(0, 200))
+ggsave(zipfs_restrict_x, height=h, width= h*ar, filename = "zipfs_restrict_x_all_soa.png")
+
+word_count_mod <- data.table(target_data)[,  .(word, count, rank, count_log = log(count), rank_log = log(rank), zipfs_freq)]
+
+# library("VGAM")
+# target_data <- data.table(target_data)
+# zfit <- vglm(rank ~ 1, zipf, data=target_data[,.(count, rank)], trace=TRUE, weight = count)
+# zfit <- vglm(rank ~ 1, zipf(lshape = "identitylink"), data = target_data[,.(count, rank)], trace = TRUE, weight = count, crit = "coef")
+# zfit@misc$N
+# (shape.hat <- Coef(zfit))
+# with(target_data[,.(count, rank)], weighted.mean(rank, count))
+# fitted(zfit, matrix = FALSE)
+
+# rank_data=c(1:200)
+# a<-data.table(rank=rank_data, frequency=1/(rank_data)^(0.25))
+# max_scale<- max(target_data$count)
+# a$frequency <- a$frequency * max_scale
+# 
+# ggplot(a, aes(x=rank, y=frequency)) + geom_line(color="blue")
+# 
+# zipfs_fit <- zipfs_plot + geom_line(data=a, aes(x=rank, y=frequency, color='blue')) +
+#   scale_x_continuous(limits = c(0, 200))
+# 
+# print(zipfs_fit)
+
+#word_count_mod <- word_count_mod
+
+fit <- lm(count_log ~ rank_log, data=word_count_mod)
+fit_linear <- lm(count_log ~ 1 + rank_log, data=word_count_mod)
+
+predicted_df <- data.table(data.frame(count_log_pred = predict(fit, word_count_mod), rank_log=word_count_mod$rank_log))
+summary(fit)
+
+fit_early <- lm(count_log ~ rank_log, data=word_count_mod[rank_log<4, ])
+predicted_early_df <- data.table(data.frame(count_log_pred = predict(fit_early, word_count_mod), rank_log=word_count_mod$rank_log))
+
+zipfs_log <- ggplot(word_count_mod) +
+  geom_point(stat="identity", aes(x = rank_log, y=count_log, color="observed")) +
+  ylab("log(frequency)") +
+  #geom_smooth(method="lm", aes(x=rank_log, y=count_log), formula=y~x, color="blue") +
+  geom_line(color='blue',data = predicted_df, aes(x=rank_log, y=count_log_pred)) +
+  # geom_line(color='darkgreen',data = predicted_early_df, aes(x=rank_log, y=count_log_pred)) +
+  # geom_text_repel(data=subset(word_count_mod, (rank <= 10)), aes(x = rank_log, y=count_log, label=word), alpha = .8, color="red") +
+  # geom_text_repel(data=subset(word_count_mod, (rank_log >= 4 & rank_log <= 6 & (rank %% 20 == 0))), aes(x = rank_log, y=count_log, label=word), alpha = .8, color="blue") +
+  # geom_text_repel(data=subset(word_count_mod, (rank_log >= 7.5 & (rank %% 100 == 0))), aes(x = rank_log, y=count_log, label=word), alpha = .8, color="darkgreen") +
+    theme_bw()
+zipfs_log
+
+ggsave(zipfs_log, height=h, width= h*ar, filename = "zipfs_log_all_soa.png")
+
+
+```

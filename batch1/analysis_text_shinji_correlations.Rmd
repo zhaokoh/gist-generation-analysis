@@ -204,6 +204,27 @@ t<- word_pairs_df[, .(word1, word2, corr, word1_img = )]
 
 ```
 
+```{r }
+load('present_conditional_prob.RData')
+rownames(result) <- all_words
+colnames(result) <- all_words
+
+dt <- melt(result)
+p <- ggplot(data = dt, aes(x=Var1, y=Var2, fill=value)) +
+  geom_tile() + xlab("") + ylab("") +
+  scale_y_discrete(limits = rev(levels(dt$Var2))) + 
+  theme(axis.text.x = element_blank(), axis.text.y = element_blank())
+
+h <- 7
+ar <- 1.5
+ggsave(p, height=h, width= h*ar, filename = "cond_prob_present.png")
+
+```
+
+
+
+
+
 
 
 

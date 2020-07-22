@@ -39,7 +39,62 @@ print(paste0("Total participants (only MTurk): ", total_mturk_subjects))
 print(paste0("Total images (including 3 practice images):", length(included_img_ids)))
 ```
 
+```{r }
+
+# RESULT: Word 
+
+total_unlimited_words <- length(unique(master_raw_stem_df[soa == 'Unlimited', ]$stem_word))
+words_unlimited_df <- master_raw_stem_df[soa == 'Unlimited',.(freq = sum(frequency)/total_unlimited_words),by=c('word')][order(-freq)]
+
+total_67_words <- length(unique(master_raw_stem_df[soa == '67', ]$stem_word))
+words_67_df <- master_raw_stem_df[soa == '67',.(freq = sum(frequency)/total_67_words),by=c('word')][order(-freq)]
+
+total_133_words <- length(unique(master_raw_stem_df[soa == '133', ]$stem_word))
+words_133_df <- master_raw_stem_df[soa == '133',.(freq = sum(frequency)/total_133_words),by=c('word')][order(-freq)]
+
+total_267_words <- length(unique(master_raw_stem_df[soa == '267', ]$stem_word))
+words_267_df <- master_raw_stem_df[soa == '267',.(freq = sum(frequency)/total_267_words),by=c('word')][order(-freq)]
+
+p_67 <- ggplot(words_67_df, aes(x = reorder(word, -freq), y = freq)) + 
+  geom_point(colour='red') +
+  xlab("") + 
+  ylab("") + 
+  scale_y_continuous(expand = c(0, 0)) +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank())
+
+p_133 <- ggplot(words_133_df, aes(x = reorder(word, -freq), y = freq)) + 
+  geom_point(colour='blue') +
+  xlab("") + 
+  ylab("") + 
+  scale_y_continuous(expand = c(0, 0)) +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank())
+
+p_267 <- ggplot(words_267_df, aes(x = reorder(word, -freq), y = freq)) + 
+  geom_point(colour='green') +
+  xlab("") + 
+  ylab("") + 
+  scale_y_continuous(expand = c(0, 0)) +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank())
+
+p_unlimited <- ggplot(words_unlimited_df, aes(x = reorder(word, -freq), y = freq)) + 
+  geom_point() +
+  xlab("") + 
+  ylab("") + 
+  scale_y_continuous(expand = c(0, 0)) +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank())
+
+cb <- ggarrange(p_unlimited, p_67, p_133, p_267,
+          labels = c("Unlimited", "67ms", "133ms", "267ms"),
+          ncol = 4, nrow = 1)
+
+```
+
 ## Demographic summary of participants
+
 
 ```{r, warning=TRUE, message=FALSE, echo = FALSE}
 full_raw_subject_df$age <- str_replace(full_raw_subject_df$age, " years old", "")
@@ -168,19 +223,223 @@ theme_set(theme_cowplot())
 
 confidence_df <- copy(master_raw_df)
 confidence_df <- confidence_df[soa != 'Unlimited' & !img_id %in% c(3, 9, 14)]
-confidence_df$soa <- as.factor(confidence_df$soa)
+confidence_df$soa <- as.numeric(paste(confidence_df$soa))
 confidence_df$img_id <- as.factor(confidence_df$img_id)
 
-soa_subject_avg_conf_df <- confidence_df[, .(avg_confidence = mean(confidence)) ,by=c("soa", "subject")]
+### Determine the distribution of slope
 
-ggplot(soa_subject_avg_conf_df,aes(x = avg_confidence, color = soa)) +
-  geom_density(size = 2,  alpha = 0.8)
+confidence_no_zero_df <- copy(master_raw_stem_df)
+confidence_no_zero_df <- confidence_no_zero_df[soa != 'Unlimited' & confidence > 0 & !img_id %in% c(3, 9, 14)]
+confidence_no_zero_df$soa <- as.numeric(paste(confidence_no_zero_df$soa))
+confidence_no_zero_df$img_id <- as.factor(confidence_no_zero_df$img_id)
+
+within_image_greater_than_one_word = confidence_no_zero_df[, .(within_soa_count = .N), by=c("img_id", "soa", "stem_word")][within_soa_count > 1]
+between_image_greater_than_one_word = within_image_greater_than_one_word[, .(between_soa_count = .N), by=c("img_id", "stem_word")][between_soa_count> 2]
+
+words_all_soas_reported_all_within_df <- merge(confidence_no_zero_df, between_image_greater_than_one_word, by = c("img_id", "stem_word"))
+words_all_soas_reported_all_within_df$img_id <- as.integer(paste(words_all_soas_reported_all_within_df$img_id ))
+words_all_soas_reported_all_within_df$soa <- as.numeric(words_all_soas_reported_all_within_df$soa)
+subject_prop_df <- copy(master_raw_stem_df)
+subject_prop_img_soa_df <- subject_prop_df[, .(soa_total_sbj_img_tested = length(unique(subject))), by = c("img_id", "soa")][soa != 'Unlimited']
+subject_prop_img_soa_df$soa <- as.numeric(paste(subject_prop_img_soa_df$soa))
+words_all_soas_reported_all_within_df <- merge(words_all_soas_reported_all_within_df, subject_prop_img_soa_df, by = c("img_id", "soa"))
+
+words_all_soas_prop_reported_all_within_df <- unique(words_all_soas_reported_all_within_df[, .(total_count = .N, prop_reported = sum(frequency)/soa_total_sbj_img_tested), by = c("img_id", "soa", "stem_word")])
+
+## START: Calculate Confidence
+unique_img_ids <- unique(words_all_soas_reported_all_within_df$img_id)
+conf_slope_df <- data.table()
+for (i in 1:length(unique_img_ids)) {
+#for (i in 1:1) {
+  current_img <- unique_img_ids[i]
+  unique_stem_words <- unique(words_all_soas_reported_all_within_df[img_id == current_img, ]$stem_word)
+  
+  for (j in 1:length(unique_stem_words)) {
+    current_stem_word <- unique_stem_words[j]
+    sub_df <- words_all_soas_reported_all_within_df[img_id == current_img & stem_word == current_stem_word, ]
+    
+    p <- ggplot(sub_df, aes(x=soa, y = confidence)) + 
+      stat_summary(fun.data=mean_cl_normal) + 
+      geom_smooth(method='lm', ) +
+      scale_x_log10(breaks = trans_breaks("log10", function(x) 10^x))
+    fitted <- ggplot_build(p)$data[[2]]
+    fitted_model <- lm(y~x, data = data.table(fitted))
+    slope <- as.numeric(fitted_model$coefficients['x'])
+    
+    conf_slope_df <- rbind(conf_slope_df, data.table(img_id = current_img, stem_word = current_stem_word, slope = slope))
+  }
+}
+
+p <- ggplot(conf_slope_df, aes(x=conf_slope_df$slope)) + geom_histogram(bins = 60, fill="#CBCBCB") +
+  xlab("Slope of regression line") +
+  ylab("Total Count") +
+  geom_vline(xintercept = mean(conf_slope_df$slope), size=1, color = "black", linetype="dashed") +
+  geom_vline(xintercept = quantile(conf_slope_df$slope, 0.95), size=1, color = "red", linetype="dashed") +
+  geom_vline(xintercept = quantile(conf_slope_df$slope, 0.05), size=1, color = "red", linetype="dashed") +
+  theme_cowplot() +
+  theme(legend.text = element_text(size=16), axis.text = element_text(size = 22),
+  axis.title=element_text(size=22,face="bold"), plot.title = element_text(size = 20)) 
+
+lower_quantile <- quantile(conf_slope_df$slope, 0.05)
+lower_df <- conf_slope_df[slope < lower_quantile, ][order(-slope)]
+
+upper_quantile <- quantile(conf_slope_df$slope, 0.95)
+upper_df <- conf_slope_df[slope > upper_quantile, ][order(-slope)]
+
+h <- 7
+ar <- 1.5
+ggsave(p, height=h, width= h*ar, filename = "confidence_rate_of_change.png")
+
+## END: Calculate Confidence
+
+
+
+## START: Calculate Proportion Reported
+
+unique_img_ids <- unique(words_all_soas_prop_reported_all_within_df$img_id)
+prop_slope_df <- data.table()
+for (i in 1:length(unique_img_ids)) {
+#for (i in 1:1) {
+  current_img <- unique_img_ids[i]
+  unique_stem_words <- unique(words_all_soas_prop_reported_all_within_df[img_id == current_img, ]$stem_word)
+  
+  for (j in 1:length(unique_stem_words)) {
+    current_stem_word <- unique_stem_words[j]
+    sub_df <- words_all_soas_prop_reported_all_within_df[img_id == current_img & stem_word == current_stem_word, ]
+    
+    p <- ggplot(sub_df, aes(x=soa, y = prop_reported)) + 
+      geom_smooth(method='lm', ) +
+      scale_x_log10(breaks = trans_breaks("log10", function(x) 10^x))
+    fitted <- ggplot_build(p)$data[[1]]
+    fitted_model <- lm(y~x, data = data.table(fitted))
+    slope <- as.numeric(fitted_model$coefficients['x'])
+    
+    prop_slope_df <- rbind(prop_slope_df, data.table(img_id = current_img, stem_word = current_stem_word, slope = slope))
+  }
+}
+
+p <- ggplot(prop_slope_df, aes(x=prop_slope_df$slope)) + geom_histogram(bins = 60, fill="#CBCBCB") +
+  xlab("Slope of regression line") +
+  ylab("Total Count") +
+  geom_vline(xintercept = mean(prop_slope_df$slope), size=1, color = "black", linetype="dashed") +
+  geom_vline(xintercept = quantile(prop_slope_df$slope, 0.95), size=1, color = "red", linetype="dashed") +
+  geom_vline(xintercept = quantile(prop_slope_df$slope, 0.05), size=1, color = "red", linetype="dashed") +
+  theme_cowplot() +
+  theme(legend.text = element_text(size=16), axis.text = element_text(size = 22),
+  axis.title=element_text(size=22,face="bold"), plot.title = element_text(size = 20)) 
+
+lower_quantile <- quantile(prop_slope_df$slope, 0.05)
+lower_df <- prop_slope_df[slope < lower_quantile, ][order(-slope)]
+
+upper_quantile <- quantile(prop_slope_df$slope, 0.95)
+upper_df <- prop_slope_df[slope > upper_quantile, ][order(-slope)]
+
+h <- 7
+ar <- 1.5
+ggsave(p, height=h, width= h*ar, filename = "proportion_rate_of_change.png")
+
+## END: Calculate Confidence
+
+# a<-more_than_one_confidence_df[img_id == 2877 & !is.na(confidence) & confidence != 0, .(mean_conf = mean(confidence), total = .N), by=c("stem_word", "soa")][order(soa, mean_conf, -total)]
+# b<-a[order(soa,mean_conf,-total)]
+
+
+# u_df <- words_all_soas_more_than_once_within_df[img_id == 4865 & stem_word %in% c("president", "obama"), .(mean_confidence = mean(confidence)),by=c("soa", "stem_word")]
+
+
+## Mean confidence
+
+input_img_id <- 589
+u_df <- words_all_soas_reported_all_within_df[img_id == input_img_id &
+                                                  !stem_word %in% c("sit", "smile", "talk"),
+                                                  .(mean_confidence = mean(confidence)),by=c("soa", "stem_word")]
+
+p <- ggplot(u_df, aes(x=soa, y=mean_confidence, color=stem_word)) +
+      geom_point(size=6) +
+      stat_summary(fun.data=mean_cl_normal) + 
+      geom_smooth(method='lm', se=F) +
+      scale_x_log10(breaks = trans_breaks("log10", function(x) 10^x, 3)) +
+      scale_y_continuous(limits=c(1, 4)) +
+      labs(x = "", y = "Mean Confidence Rating", colour = "Word") +
+      theme_cowplot() +
+      theme(axis.text.x = element_blank()) +
+    theme(legend.title = element_blank(), legend.text = element_text(size=26), axis.text = element_text(size = 26), legend.position=c(0., 0.2),        axis.title=element_text(size=26,face="bold"), plot.title = element_text(size = 20))
+
+h <- 7
+ar <- 1.5
+ggsave(p, height=h, width= h*ar, filename = paste0("confidence_rate_of_change_", input_img_id, ".png"))
+
+
+```
+
+```{r }
+## Proportion Reported
+
+input_img_id <- 2260
+u_df <- words_all_soas_prop_reported_all_within_df[img_id == input_img_id &
+                                                  !stem_word %in% c("sky","tree"),
+                                                   # TRUE == TRUE,
+                                                  .(prop_reported),by=c("soa", "stem_word")]
+
+p <- ggplot(u_df, aes(x=soa, y=prop_reported, color=stem_word)) +
+      geom_point(size=6) +
+      #stat_summary(fun.data=mean_cl_normal) + 
+      geom_smooth(method='lm', se=F) +
+      scale_x_log10(breaks = trans_breaks("log10", function(x) 10^x, 3)) +
+      #scale_y_continuous(limits=c(1, 4)) +
+      labs(x = "", y = "Prop. of sbjs who reported the word", colour = "Word") +
+      theme_cowplot() +
+      theme(axis.text.x = element_blank()) +
+    theme(legend.title = element_blank(), legend.text = element_text(size=26), axis.text = element_text(size = 26), legend.position=c(0.2, 0.2),    
+          axis.title=element_text(size=24,face="bold"), plot.title = element_text(size = 20))
+
+h <- 7
+ar <- 1.5
+ggsave(p, height=h, width= h*ar, filename = paste0("proportion_rate_of_change_", input_img_id, ".png"))
+
+       
+### END OF - Determine the distribution of slope
+
+```
+
+```{r, }
+# model<-lm(confidence~soa, data=a)
+
+soa_subject_avg_conf_df <- confidence_df[, .(avg_confidence = mean(confidence)) ,by=c("soa", "subject")]
+soa_subject_avg_conf_df$soa <- factor(soa_subject_avg_conf_df$soa)
+
+ggplot(soa_subject_avg_conf_df) +
+  geom_density(size = 2,  alpha = 0.8, aes(x = avg_confidence, color=soa))
 
 ggplot(soa_subject_avg_conf_df,aes(x = soa, y = avg_confidence)) +
   geom_violin(size = 1.5) + 
   geom_jitter(aes(colour = factor(soa)), height = 0)
 
+
+# Collapse SOA and Images (Subject confidence)
+
+subject_avg_conf_df <- confidence_df[, .(avg_confidence = mean(confidence), standard_dev = sd(confidence)) ,by=c("subject")]
+
+ggplot(subject_avg_conf_df) +
+  geom_histogram(aes(x = avg_confidence), binwidth = 0.1) +
+  ggtitle("Average confidence by subjects, bin width = 0.1")
+
+ggplot(subject_avg_conf_df) +
+  geom_histogram(aes(x = standard_dev), binwidth = 0.05) +
+  ggtitle("Standard deviation of confidence by subjects, bin width = 0.05")
+
+ggplot(subject_avg_conf_df,aes(x = "Confidence", y = avg_confidence)) +
+  geom_violin(size = 1.5) 
+
+    geom_jitter(aes(colour = factor(soa)), height = 0)
+
+
+
+```
+
+```{r, }
 plt_df <- confidence_df
+plt_df$soa <- factor(plt_df$soa)
 
 # Combined confidence
 
@@ -188,10 +447,11 @@ plt_df$confidence <- as.factor(plt_df$confidence)
 confidence_split_plot <- ggplot(plt_df, aes(x = soa, fill=confidence)) +
   geom_bar(position = 'fill', stat = "count") +
   xlab("Presentation Duration (ms)") +
-  ylab("Percentage (%)") +
+  ylab("Proportion of Ratings (%)") +
   scale_y_continuous(expand = c(0, 0), labels = function(x) paste0(x*100)) +
-  theme(legend.text = element_text(size=16), axis.text = element_text(size = 22), plot.title = element_text(size = 20)) +
-  ggtitle(paste0("N = ", formatC(length(plt_df$confidence), format='f', big.mark=',', digits=0))) + 
+  theme(legend.text = element_text(size=16), axis.text = element_text(size = 22),
+        axis.title=element_text(size=22,face="bold"), plot.title = element_text(size = 20)) +
+  ggtitle(paste0("Total number of confidence ratings = ", formatC(length(plt_df$confidence), format='f', big.mark=',', digits=0))) + 
   scale_fill_brewer(palette="Paired",name = "Confidence Rating", 
                   labels = c("Don't know", "Guess", "Maybe", "Confident", "Very Confident"))
 
@@ -202,11 +462,11 @@ ggsave(confidence_split_plot, height=h, width= h*ar, filename = "confidence_spli
 freq_conf_df <- confidence_df[, .(total_freq = sum(frequency), avg_confidence = mean(confidence)), by = c("img_id", "soa", "word")]
 
 freq_avg_conf_plot <- ggplot(freq_conf_df[avg_confidence > 0,], aes(x = total_freq, y = avg_confidence, colour = factor(soa))) +
-  geom_jitter(height = 0.01, aes(shape = factor(soa)), size = 2) +
-  geom_smooth(method = "lm", formula = y ~ poly(x, 2, raw=TRUE)) + 
+  geom_point(height = 0, aes(shape = factor(soa)), size = 2) +
+  geom_smooth(method = "lm", formula = y ~ poly(x, 1, raw=TRUE)) + 
   xlab("Word Frequency") +
-  ylab("Mean Confidence Ratings") +
-  facet_grid(. ~ soa)
+  ylab("Mean Confidence Ratings") 
+  #facet_grid(. ~ soa)
 
 h <- 7
 ar <- 1.5
@@ -361,12 +621,12 @@ dodge <- position_dodge(width = 0.8)
 plt <- ggplot(plt_avg_df, aes(x = soa, y = avg_confidence)) +
   geom_violin(position = dodge) +
   geom_boxplot(width=0.3, position = dodge) +
-  xlab("Presentation Time (ms)") +
+  xlab("Presentation Duration (ms)") +
   ylab("Average Confidence Ratings") +
   ggtitle(paste0("Participants = ", length(unique(plt_df$subject)), ", Images = ", length(unique(plt_df$img_id)))) +
-  theme(axis.text = element_text(size = 14)) +
+  theme(axis.text = element_text(size = 22), plot.title = element_text(size = 20)) +
   geom_signif(y_position=c(-0.2, 0.2, 3.9), xmin=c(1.0, 2, 1), xmax=c(2, 3, 3), annotation=c("***", "***", "***"), tip_length=0) + 
-  theme(axis.text = element_text(size = 14), text = element_text(size = 14))
+  theme(axis.title = element_text(size = 22,face="bold"), text = element_text(size = 20))
 
 h <- 7
 ar <- 1.5
@@ -442,8 +702,6 @@ ks.test(kl_Unlimited_67$kl_value, kl_Unlimited_133$kl_value)
 ks.test(kl_Unlimited_67$kl_value, kl_Unlimited_267$kl_value)
 ks.test(kl_Unlimited_133$kl_value, kl_Unlimited_267$kl_value)
 
-
-
 df_67 <- melt_kl_df[kl_type %in% c('kl_67_133', 'kl_67_267', 'kl_67_Unlimited')]
 
 res.aov <- aov(kl_value ~ kl_type, data = df_67)
@@ -473,7 +731,6 @@ TukeyHSD(res.aov)
 
 
 # TODO Zhao - Determine significant of models between different KL divergence
-
 
 # word_prop_conf_df <- copy(master_raw_stem_df)
 # word_prop_conf_df <- aggregate_word_column(word_prop_conf_df, c("img_id", "soa"))
@@ -543,8 +800,8 @@ p_word_var <- ggplot(plt_df, aes(x = "", y = value)) +
     #geom_point(position = position_jitter(width = 0.1)) +
     labs(y=paste("Jensen-Shannon Distance")) +
     xlab("") +
-    #ggtitle(paste0(title)) +
-    ggtitle(paste0("N=", length(unique(plt_df$Var1))))
+    ggtitle(paste0("Total Number of Pairwise Comparisons=", formatC(nrow(plt_df), format='f', big.mark=',', digits=0))) +
+    theme(axis.title = element_text(size = 22,face="bold"), text = element_text(size = 20), plot.title = element_text(size = 20,face="bold"))
 
 h <- 7
 ar <- 1.5
@@ -605,7 +862,8 @@ img_stem_plt_df <- img_stem_plt_df[, -c("agg_word", "stem_word")]
 img_stem_plt_df <- img_stem_plt_df[!img_id %in% c(3, 9, 14),]
 
 theme_set(theme_minimal())
-analyse_plot_single_image(img_stem_plt_df, 312, 1)
+#analyse_plot_single_image(img_stem_plt_df, 312, 1)
+analyse_plot_single_image(img_stem_plt_df, 4865, 1)
 #analyse_plot_single_image(img_stem_plt_df, 9999002, 1)
 # tst <- tst + 
 #   scale_y_continuous(
@@ -629,7 +887,7 @@ for (i in unique(details_df$values.img_file)) {
 
 
 #img_id = "0001326"
-img_id = "9999006"
+img_id = "0000183"
 analyse_plot_single_image(img_stem_plt_df, as.integer(img_id), 1)
 plot_word_cloud_for_image(details_df, paste0("im", img_id, ".jpg"), 67)
 plot_word_cloud_for_image(details_df, paste0("im", img_id, ".jpg"), 133)

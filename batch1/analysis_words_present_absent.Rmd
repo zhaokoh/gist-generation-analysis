@@ -1,0 +1,312 @@
+---
+title: "Analysis - Present and Absent Words"
+subtitle: "Prepared by Zhao - `r format(Sys.time(), '%d %B, %Y')`"
+geometry: left=2cm,right=2cm,top=2cm,bottom=2cm
+output:
+  pdf_document:
+    latex_engine: xelatex
+  html_document:
+    df_print: paged
+header-includes: \usepackage{xcolor}
+---
+
+```{r include=FALSE, echo=FALSE, message=FALSE}
+source('embed_import_libraries.R')
+source('embed_configuration.R')
+
+# Functions
+source('function-analyse_single_image_kl_divergence.R')
+source('function-analyse_plot_single_image.R')
+source('function-aggregate_word_column.R')
+source('function-calculate_kl_for_dataframe.R')
+source('function-compute_kl.R')
+source('function-compute_pairwise_kl.R')
+source('function-image_utilities.R')
+source('function-load_alon_descriptors.R')
+source('function-load_data.R')
+source('function-load_subject_data.R')
+source('function-plot_kl_divergence.R')
+source('function-plot_word_cloud.R')
+source('function-utilities.R')
+source('function-validate_img_soa_group_numbers.R')
+
+library("scales")
+```
+
+## Data Summary
+
+```{r configuration, echo=FALSE, warning=FALSE}
+load(file = "psy4100_master_data.RData")
+
+print(paste0("Total participants (includes Shinji's): ", total_subjects))
+print(paste0("Total participants (only MTurk): ", total_mturk_subjects))
+print(paste0("Total images (including 3 practice images):", length(included_img_ids)))
+```
+
+```{r, echo=FALSE}
+## All words
+master_raw_stem_df$stem_word <- as.character(master_raw_stem_df$stem_word)
+master_raw_stem_df[grepl("-", master_raw_stem_df$word), ]$stem_word <- master_raw_stem_df[grepl("-", master_raw_stem_df$word), ]$word
+
+valid_words_df = master_raw_stem_df[confidence > 0 & !img_id %in% c(3, 9 ,14), ]
+valid_words_df$img_id = factor(valid_words_df$img_id)
+
+# Number of unique words across all SOAs
+unique_words_per_image_df = valid_words_df[, .(unique_words = length(unique(stem_word))),by=c('img_id')]
+ggplot(unique_words_per_image_df, aes(x=unique_words)) +
+  geom_histogram(stat = 'count') + 
+  xlab("Number of Unique Words Across all SOAs") + 
+  ylab("Count (Number of Images)") +
+  ggtitle(paste0("N=", nrow(unique_words_per_image_df)))
+
+ggplot(unique_words_per_image_df) +
+  geom_boxplot(aes(y=unique_words)) + 
+  xlab("Number of Unique Words Across all SOAs") + 
+  ylab("Count (Number of Images)")
+
+
+# Number of unique words by SOAs
+unique_words_per_soa_image_df = valid_words_df[, .(unique_words = length(unique(stem_word))),by=c('img_id', 'soa')]
+ggplot(unique_words_per_soa_image_df, aes(x=unique_words)) +
+  geom_histogram(stat = 'count') + 
+  xlab("Number of Unique Words") + 
+  ylab("Count (Number of Images)") + 
+  ggtitle(paste0("N=", nrow(unique_words_per_image_df))) +
+  facet_grid(. ~ soa) 
+
+ggplot(unique_words_per_soa_image_df) +
+  geom_boxplot(aes(y=unique_words)) + 
+  xlab("Number of Unique Words") + 
+  ylab("Count (Number of Images)") +
+  ggtitle(paste0("N=", nrow(unique_words_per_image_df))) +
+  facet_grid(. ~ soa)
+
+```
+
+
+```{r, }
+# Number of unique words by confidence all SOAs
+unique_words_confidence_per_image_df <- valid_words_df[, .(avg_confidence = mean(confidence), total_count = sum(frequency)),by=c('img_id', 'stem_word')]
+
+unique_words_confidence_3_or_more_df <- unique_words_confidence_per_image_df[avg_confidence>=3, ]
+
+unique_words_confidence_3_per_image_df = unique_words_confidence_3_or_more_df[, .(unique_words = length(unique(stem_word))),by=c('img_id')]
+ggplot(unique_words_confidence_3_per_image_df, aes(x=unique_words)) +
+  geom_histogram(stat = 'count') + 
+  xlab("Number of Unique Words (Avg Confidence Ratings >= 3) all SOAs") + 
+  ylab("Count (Number of Images)") +
+  ggtitle(paste0("N=", nrow(unique_words_confidence_3_per_image_df)))
+
+ggplot(unique_words_confidence_3_per_image_df) +
+  geom_boxplot(aes(y=unique_words)) + 
+  xlab("Number of Unique Words (Avg Confidence Ratings >= 3) all SOAs") + 
+  ylab("Count (Number of Images)")
+
+
+unique_words_confidence_per_image_soa_df <- valid_words_df[, .(avg_confidence = mean(confidence), total_count = sum(frequency)),by=c('img_id', 'stem_word', 'soa')]
+
+unique_words_confidence_3_or_more_soa_df <- unique_words_confidence_per_image_soa_df[avg_confidence>=3, ]
+
+unique_words_confidence_3_per_image_soa_df = unique_words_confidence_3_or_more_soa_df[, .(unique_words = length(unique(stem_word))),by=c('img_id', 'soa')]
+
+ggplot(unique_words_confidence_3_per_image_soa_df, aes(x=unique_words)) +
+  geom_histogram(stat = 'count') + 
+  xlab("Number of Unique Words (Avg Confidence Ratings >= 3) all SOAs") + 
+  ylab("Count (Number of Images)") + 
+  ggtitle(paste0("N=", nrow(unique_words_per_image_df))) +
+  facet_grid(. ~ soa) 
+```
+
+```{r, echo=FALSE}
+## All words
+valid_words_df <- master_raw_stem_df[confidence > 0 & !img_id %in% c(3, 9 ,14), ]
+valid_words_df$img_id = factor(valid_words_df$img_id)
+
+unique_words_per_image_df = valid_words_df[, .(unique_words = length(unique(stem_word))),by=c('img_id')]
+ggplot(unique_words_per_image_df, aes(x=unique_words)) +
+  geom_histogram(stat = 'count') + 
+  xlab("Number of Unique Words Across all SOAs") + 
+  ylab("Count (Number of Images)") +
+  ggtitle(paste0("N=", nrow(unique_words_per_image_df)))
+
+## 
+words_count_df <- valid_words_df[, .(word_count = sum(frequency)), by=c("img_id", "stem_word")]
+words_count_soa_df <- valid_words_df[, .(word_count = sum(frequency)), by=c("img_id", "stem_word", "soa")]
+
+words_count_more_than_one_df <- words_count_df[word_count > 1, ]
+words_soa_count_more_than_one_df <- words_count_soa_df[word_count > 1, ]
+
+# Number of unique words across all SOAs
+unique_words_per_image_df = words_count_more_than_one_df[, .(unique_words = length(unique(stem_word))),by=c('img_id')]
+ggplot(unique_words_per_image_df, aes(x=unique_words)) +
+  geom_histogram(stat = 'count') + 
+  xlab("Number of Unique Words with 2 or more agreements") + 
+  ylab("Count") +
+  ggtitle(paste0("N=", nrow(unique_words_per_image_df)))
+
+ggplot(unique_words_per_image_df) +
+  geom_boxplot(aes(y=unique_words)) + 
+  xlab("Number of Unique Words with 2 or more agreements") + 
+  ylab("Count")
+
+# Number of unique words by SOAs
+unique_words_per_soa_image_df = words_soa_count_more_than_one_df[, .(unique_words = length(unique(stem_word))),by=c('img_id', 'soa')]
+ggplot(unique_words_per_soa_image_df, aes(x=unique_words)) +
+  geom_histogram(stat = 'count') + 
+  xlab("Number of Unique Words with 2 or more agreements") + 
+  ylab("Count") +
+  ggtitle(paste0("N=", nrow(unique_words_per_image_df))) +
+  facet_grid(. ~ soa) 
+
+ggplot(unique_words_per_soa_image_df) +
+  geom_boxplot(aes(y=unique_words)) + 
+  xlab("Number of Unique Words with 2 or more agreements") + 
+  ylab("Count") +
+  ggtitle(paste0("N=", nrow(unique_words_per_image_df))) +
+  facet_grid(. ~ soa)
+```
+
+```{r, }
+# Extract list of words from 2 or more agreements >= 30
+trim <- function (x) gsub("^\\s+|\\s+$", "", x)
+
+determine_absent_words <- function(valid_words_df, imgid) {
+  all_words <- unique(valid_words_df$stem_word)
+  all_img_words <- valid_words_df[img_id == imgid, ]$stem_word
+  #split_str_array <- trim(strsplit(present_word_list, split = ",")[[1]])
+  absent_words <- all_words[!all_words %in% all_img_words]
+  return(toString(absent_words))
+}
+
+img_id_more_than_30_words <- unique_words_per_image_df[unique_words >= 30, ]$img_id
+word_list_df <- words_count_more_than_one_df[img_id %in% img_id_more_than_30_words, c("img_id", "stem_word")]
+word_list_df$stem_word <- as.character(word_list_df$stem_word)
+
+export_words_df <- word_list_df[, .(present = toString(stem_word), absent = determine_absent_words(valid_words_df, img_id)), by = c("img_id") ]
+
+#write.table(export_words_df, sep=",", row.names=FALSE, file="zhao_words_2_or_more_agreements.csv")
+
+## ---------
+
+valid_words_133_267_df <- valid_words_df[soa %in% c(133, 267)]
+#valid_words_133_267_df <- valid_words_df[soa %in% c(67)]
+valid_words_within_soa_133_267_one_or_more_df <- valid_words_133_267_df[,.(total = sum(frequency)),by=c("img_id", "stem_word")][order(img_id, -total)]
+
+valid_words_within_soa_133_267_one_or_more_df <- merge(valid_words_within_soa_133_267_one_or_more_df, valid_words_within_soa_133_267_one_or_more_df[, .(total_unique_words = .N) ,by=c("img_id")], by = "img_id")
+
+img_id_more_than_40_words <- valid_words_within_soa_133_267_one_or_more_df[total_unique_words >= 40]$img_id
+word_list_df <- valid_words_within_soa_133_267_one_or_more_df[img_id %in% img_id_more_than_40_words, c("img_id", "stem_word")]
+export_words_df <- word_list_df[, .(present = toString(stem_word), absent = determine_absent_words(valid_words_df, img_id)), by = c("img_id") ]
+export_words_df <- merge(export_words_df, valid_words_within_soa_133_267_one_or_more_df[, .(total_present = .N) ,by=c("img_id")], by = "img_id")
+export_words_df <- export_words_df[, c('img_id','total_present', 'present', 'absent')]
+
+valid_words_within_soa_133_267_one_or_more_df$img_id <- droplevels(valid_words_within_soa_133_267_one_or_more_df$img_id)
+valid_words_within_soa_133_267_one_or_more_df = valid_words_within_soa_133_267_one_or_more_df[, .(img_id = paste0("im", sprintf("%07s", valid_words_within_soa_133_267_one_or_more_df$img_id), ".jpg"), stem_word, total, total_unique_words)]
+
+#write.table(valid_words_within_soa_133_267_one_or_more_df, sep=",", row.names=FALSE, quote = TRUE, file="zhao_words_133_267_all.csv")
+
+```
+
+```{r include=FALSE}
+aggregate_unique_words <- function(dt, index_array) {
+  accum_arr = c()
+  current_unique_words = c()
+  
+  for (i in 1:length(index_array)) {
+    imgid <- index_array[i]
+    img_words <- as.array(dt[img_id == imgid, ]$stem_word)
+    current_unique_words <- c(current_unique_words, img_words)
+    accum_arr <- c(accum_arr, length(unique(current_unique_words)))
+  }
+  
+  return(data.table(img_id = index_array, accum_unique_words = accum_arr))
+}
+
+## All words
+valid_words_df <- master_raw_stem_df[confidence > 0 & !img_id %in% c(3, 9 ,14), ]
+valid_words_df$img_id = factor(valid_words_df$img_id)
+
+valid_words_within_soa_more_than_once_df <- valid_words_df[,.(total = sum(frequency)),by=c("img_id", "soa", "stem_word")][total > 1]
+
+unique_words_per_image_df = valid_words_df[, .(unique_words = length(unique(stem_word))),by=c('img_id')]
+ggplot(unique_words_per_image_df, aes(x=img_id)) +
+  geom_bar(stat='identity', aes(y=unique_words)) + 
+  xlab("Number of Unique Words Across all SOAs") + 
+  ylab("Count") +
+  ggtitle(paste0("N=", nrow(unique_words_per_image_df)))
+
+img_ids <- unique(valid_words_df$img_id)
+unique_subjects_df <- valid_words_df[,.(total_subjects = length(unique(subject))) ,by=img_id]
+
+word_agg_df <- aggregate_unique_words(valid_words_df, img_ids)
+word_agg_more_than_one_df <- aggregate_unique_words(valid_words_within_soa_more_than_once_df, img_ids)
+word_total_words <- valid_words_df[, .(total_tokens = sum(frequency)), by=c("img_id")]
+word_total_words$accum_total_tokens = cumsum(word_total_words$total_tokens)
+word_total_words$total_tokens <- NULL
+
+merge_df <- merge(word_agg_df, word_agg_more_than_one_df, by = c("img_id"), all=FALSE)
+merge_df <- merge(merge_df, word_total_words, by = c("img_id"), all=FALSE)
+
+setnames(merge_df, old=c("accum_unique_words.x","accum_unique_words.y"), new=c("accum_1", "accum_2"))
+
+word_agg_df$img_id <- as.factor(word_agg_df$img_id)
+#permute_accum_word_agg <- as.array(word_agg_df$accum_unique_words)
+
+# require(permute)
+# for (i in 1:1) {
+#   #rnd_img_ids = img_ids[shuffle(img_ids)]
+#   rnd_img_ids = img_ids
+#   word_agg_df <- aggregate_unique_words(valid_words_df, rnd_img_ids)
+#   word_agg_df$img_id <- as.factor(word_agg_df$accum_unique_words)
+# 
+#   permute_accum_word_agg <- rbind(permute_accum_word_agg, as.array(word_agg_df$accum_unique_words))
+# }
+```
+
+```{r, }
+library(latex2exp)
+
+#merge_df <- data.table(melt(permute_accum_word_agg))
+merge_df$img_id <- as.numeric(merge_df$img_id)
+
+t1 <- data.table(accum_total_tokens = merge_df$accum_total_tokens, accum_p_10 = 3.76* ((merge_df$accum_total_tokens)^(0.6693)))
+p_cumulative_concepts <- ggplot(t1) +
+  geom_line(aes(x=accum_total_tokens, y=accum_p_10, colour="brown"), linetype="dotted", size=1)
+#lm1 <- glm(accum_1 ~ 1 + log10(accum_total_tokens) + I(accum_total_tokens^2), data = merge_df[, .(accum_total_tokens, accum_1)])
+lm1 <- glm(log10(accum_1) ~ 1 + log10(accum_total_tokens), data = merge_df[, .(accum_total_tokens, accum_1)])
+lm2 <- glm(accum_2 ~ 1 + log10(accum_total_tokens) + I(accum_total_tokens^2), data = merge_df[, .(accum_total_tokens, accum_2)])
+
+p_cumulative_concepts <- ggplot(merge_df) +
+  #stat_summary(geom="ribbon", fun.ymin="min", fun.ymax="max") +
+  #geom_line() + 
+  geom_line(stat='identity', aes(x=accum_total_tokens, y=accum_1, colour="red"), size=1) +
+  # geom_line(data=data.table(accum_total_tokens = merge_df$accum_total_tokens, fitted = predict(lm1)), aes(x=accum_total_tokens, y=fitted, colour="red"), linetype="dotted", size=2) +
+  ggplot2::annotate("text", x = 45000, y= 6200, label = "Concepts reported at least once per image", size=6) +
+  ggplot2::annotate("text", x = 47000, y= 4200, label = TeX("Fitted: $ V_{R}(n) = 3.76 * n^{0.67} + \\epsilon $"), size=5) +
+  # geom_line(stat='identity', aes(x=accum_total_tokens, y=accum_2, colour="blue"), size=1) +
+  # geom_line(data=data.table(accum_total_tokens = merge_df$accum_total_tokens, fitted = predict(lm2)), aes(x=accum_total_tokens, y=fitted, colour="blue"), linetype="dotted", size=1) +
+  # ggplot2::annotate("text", x = 330, y= 1800, label = "Concepts reported >= 2 per image", size=6) +
+  # ggplot2::annotate("text", x = 330, y= 750, label = TeX("Fitted: $y = 146.52 + 4.96x - \\frac{0.005}{x^2} + \\epsilon$"), size=5) +
+  #geom_line(stat='identity', aes(x=accum_total_tokens, y=c(seq(150, 150*length(img_ids), by=150))), linetype="dashed", colour="grey", size=1) +
+  geom_line(data=t1, aes(x=accum_total_tokens, y=accum_p_10, colour="red"), linetype="dotted", size=1) +
+  #ggplot2::annotate("text", x = 100, y= 8200, label = TeX("All concepts are unique per image"), size=4) +
+  xlab("Total Number of Words") +
+  ylab("Unique Concepts (Cumulative)") +
+   scale_x_continuous(breaks=c(seq(0, max(merge_df$accum_total_tokens), by=10000)), expand = c(0,0)) +
+   scale_y_continuous(breaks=c(seq(0, 10000, by=2000)), expand = c(0,0), limits = c(0, 10000)) +
+  #scale_fill_identity(name = 'the fill', guide = 'legend',labels = c('m1')) +
+  #scale_color_manual(name = "Words Reported", values=c('red', 'blue'), labels=c("at least once", ">= 2")) +
+  #theme_cowplot() + 
+  theme(
+    #axis.text.x = element_blank(), 
+    legend.position="none",
+    legend.text = element_text(size=20), legend.title = element_text(size=20), axis.text = element_text(size = 22),
+    axis.title=element_text(size=22,face="bold"), plot.title = element_text(size = 20))
+
+h <- 7
+ar <- 1.5
+ggsave(p_cumulative_concepts, height=h, width= h*ar, filename = "cumulative_unique_concepts.png")
+
+print(p_cumulative_concepts)
+
+```
