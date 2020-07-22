@@ -238,12 +238,12 @@ plot_kl_divergence <- function(in_dt_raw, title, suffix = "", batch_no = "") {
     geom_boxplot(width=0.3, position = dodge, show.legend = FALSE, aes(col = img_id)) +
     # stat_summary(fun.y = mean, geom="point", shape=23, size=2) +
     # stat_summary(fun.y = median, geom="point", size=2, color="red") +
-    labs(y=expression(paste("Jensen-Shannon Distance"))) +
+    labs(y="Jensen-Shannon Distance", x="Presentation Duration Pair") +
     scale_x_discrete(labels = c("67ms & 133ms", "67ms & 267ms", "133ms & 267ms")) +
-    xlab("") + 
-    ggtitle(paste0("Images = ", length(unique(in_dt_no_unlimited$img_id)))) +
+    #coord_cartesian(ylim=c(0.7, 0.8)) +
+    ggtitle(paste0("Total Number of Images = ", length(unique(in_dt_no_unlimited$img_id)))) +
     scale_fill_brewer(palette="Spectral") +
-    #theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+    theme(axis.title = element_text(size = 16, face="bold"), text=element_text(size=16, face="bold"), plot.title = element_text(size = 14,face="bold")) +
     geom_text(data = anno, aes(x = xstar,  y = ystar, label = lab)) +
     geom_segment(data = anno, aes(x = x1, xend = x1,
                                   y = y1, yend = y2),
@@ -280,7 +280,6 @@ plot_kl_divergence <- function(in_dt_raw, title, suffix = "", batch_no = "") {
 
   library(lmerTest)
   
-  browser()
   print(anova(t))
 
   posthoc <- glht(t, linfct = mcp(kl_type = "Tukey"))

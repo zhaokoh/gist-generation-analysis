@@ -19,7 +19,7 @@ analyse_plot_single_image <- function(master_df, imgid, ignore_count_threshold =
   ## Filter any unnecessary words
   dfi <- dfi[!word %in% c("na", "none", "nothing", "nada")]
   
-  soa_labeller <- function(variable, value) {
+  soa_labeller <- function(variable, value) { 
     soa_labels <- c()
     for (single_soa in value) {
       total_subjects <- img_soa_total_subjects[img_id == imgid & soa == single_soa]$total_subjects[1]
@@ -115,7 +115,7 @@ analyse_plot_single_image <- function(master_df, imgid, ignore_count_threshold =
     #geom_point(position = position_jitter(width = 0.1)) +
     labs(y=paste("Variability of Reported Words")) +
     #ggtitle(paste0(title)) +
-    ggtitle(paste0("N=", length(unique(merge_img_soa_variability$img_id)))) +
+    ggtitle(paste0("Total Number of Images=", length(unique(merge_img_soa_variability$img_id)))) +
     scale_x_discrete(name="Presentation Duration (ms)", labels=c("67", "133", "267")) +
     theme(legend.title = element_blank(), legend.position = "none") +
     geom_text(data = anno, aes(x = xstar,  y = ystar, label = lab)) +
@@ -128,7 +128,9 @@ analyse_plot_single_image <- function(master_df, imgid, ignore_count_threshold =
     geom_segment(data = anno, aes(x = x1, xend = x2,
                                   y = y2, yend = y2),
                  colour = "black") +
-    theme_cowplot()
+    theme_cowplot() + 
+    theme(legend.text = element_text(size=16), axis.text = element_text(size = 22),
+          axis.title=element_text(size=22,face="bold"), plot.title = element_text(size = 20))
 
     h <- 7
     ar <- 1.5
@@ -263,19 +265,20 @@ analyse_plot_single_image <- function(master_df, imgid, ignore_count_threshold =
   subject_prop_img_soa_word_df <- subject_prop_df[, .(soa_sbj_word_freq = length(unique(subject)), soa_single_word_confidence = mean(confidence)), by = c("img_id", "soa", "word")]
   subject_prop_img_soa_word_df <- merge(subject_prop_img_soa_word_df, subject_prop_img_soa_df, all.x = TRUE, by = c("img_id", "soa"))
   subject_prop_df <- subject_prop_img_soa_word_df[, .(word_soa_proportion = soa_sbj_word_freq/soa_total_sbj_img_tested), by = c("img_id", "soa", "word")]
-
+  subject_prop_confidence_df <- merge(subject_prop_df, subject_prop_img_soa_word_df, by=c("img_id", "soa", "word"), all.x = TRUE)
+  
   p4 <- ggplot(subject_prop_df) +
-    geom_histogram(stat = "identity") +
-    aes(x=reorder(subject_prop_df$word, subject_prop_df$word_soa_proportion, sum), y=word_soa_proportion, col=soa, fill = soa) +
-    coord_flip() +
-    #ggtitleimg("Proportion of report by Presentation Duration", imgid) +
-    #ggtitle(paste0("Image ", imgid)) +
-    xlab("Word") +
-    ylab("Proportion of participants who reported the word") +
-    theme(axis.text = element_text(size = 6)) +
-    theme(legend.title = element_blank(), legend.position = "none") +
-    facet_grid(. ~ soa, labeller = soa_labeller)
-    #facet_grid(. ~ soa)
+  geom_histogram(stat = "identity") +
+  aes(x=reorder(subject_prop_df$word, subject_prop_df$word_soa_proportion, sum), y=word_soa_proportion, col=soa, fill = soa) +
+  coord_flip() +
+  #ggtitleimg("Proportion of report by Presentation Duration", imgid) +
+  #ggtitle(paste0("Image ", imgid)) +
+  xlab("Word") +
+  ylab("Proportion of participants who reported the word") +
+  theme(axis.text = element_text(size = 6)) +
+  theme(legend.title = element_blank(), legend.position = "none") +
+  facet_grid(. ~ soa, labeller = soa_labeller)
+  #facet_grid(. ~ soa)
 
   max_count <- max(subject_prop_df[, word_soa_proportion, by = c("soa", "word")]$word_soa_proportion)
   p4 <- p4 +
@@ -283,6 +286,49 @@ analyse_plot_single_image <- function(master_df, imgid, ignore_count_threshold =
     theme(axis.text.x = element_text(size = 10), axis.text.y = element_text(size = 12))
   gt <- add_image_to_plot(p4, image)
   ggsave(paste0("ind_sbj_proportion_dist_per_soa_img_", imgid, '.png'), gt)
+  
+
+  p4_1 <- ggplot(subject_prop_confidence_df) +
+    geom_histogram(stat = "identity") +
+    aes(x=reorder(subject_prop_confidence_df$word, subject_prop_confidence_df$word_soa_proportion, sum), y=soa_single_word_confidence, col=soa, fill = soa) +
+    coord_flip() +
+    #ggtitleimg("Proportion of report by Presentation Duration", imgid) +
+    #ggtitle(paste0("Image ", imgid)) +
+    xlab("Word") +
+    ylab("Mean confidence ratings") +
+    theme(axis.text = element_text(size = 6)) +
+    theme(legend.title = element_blank(), legend.position = "none") +
+    facet_grid(. ~ soa, labeller = soa_labeller)
+  #facet_grid(. ~ soa)
+  
+  max_count <- max(subject_prop_confidence_df[, word_soa_proportion, by = c("soa", "word")]$word_soa_proportion)
+  p4_1 <- p4_1 +
+    #scale_y_continuous(breaks = seq(0, max_count, by=10)) +
+    theme(axis.text.x = element_text(size = 10), axis.text.y = element_text(size = 12))
+  gt <- add_image_to_plot(p4_1, image)
+  ggsave(paste0("ind_sbj_confidence_dist_per_soa_img_", imgid, '.png'), gt)
+  
+  
+  # p4_1 <- ggplot(subject_prop_img_soa_word_df) +
+  #   geom_histogram(stat = "identity") +
+  #   aes(x=reorder(subject_prop_img_soa_word_df$word, subject_prop_img_soa_word_df$word_soa_proportion, sum), y=soa_single_word_confidence, col=soa, fill = soa) +
+  #   coord_flip() +
+  #   #ggtitleimg("Proportion of report by Presentation Duration", imgid) +
+  #   #ggtitle(paste0("Image ", imgid)) +
+  #   xlab("Word") +
+  #   ylab("Mean confidence ratings") +
+  #   theme(axis.text = element_text(size = 6)) +
+  #   theme(legend.title = element_blank(), legend.position = "none") +
+  #   facet_grid(. ~ soa, labeller = soa_labeller)
+  # #facet_grid(. ~ soa)
+  # 
+  # max_count <- max(subject_prop_img_soa_word_df[, word_soa_proportion, by = c("soa", "word")]$word_soa_proportion)
+  # p4 <- p4 +
+  #   #scale_y_continuous(breaks = seq(0, max_count, by=10)) +
+  #   theme(axis.text.x = element_text(size = 10), axis.text.y = element_text(size = 12))
+  # gt <- add_image_to_plot(p4, image)
+  # ggsave(paste0("ind_sbj_mean_confidence_dist_per_soa_img_", imgid, '.png'), gt)
+  
   
   ## Plot confidence-weighted subject proportion
   # subject_prop_df <- subject_prop_img_soa_word_df[, .(word_soa_proportion = (soa_sbj_word_freq/soa_total_sbj_img_tested) * (soa_single_word_confidence/4)), by = c("img_id", "soa", "word")]
