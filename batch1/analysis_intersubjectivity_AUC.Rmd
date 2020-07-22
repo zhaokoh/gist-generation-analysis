@@ -1,0 +1,656 @@
+---
+title: "Analysis"
+subtitle: "MTurk Analysis - `r format(Sys.time(), '%d %B, %Y')`"
+geometry: left=2cm,right=2cm,top=2cm,bottom=2cm
+output:
+  pdf_document:
+    latex_engine: xelatex
+  html_document:
+    df_print: paged
+header-includes: \usepackage{xcolor}
+---
+
+```{r include=FALSE, echo=FALSE, message=FALSE}
+source('embed_import_libraries.R')
+source('embed_configuration.R')
+source('function-image_utilities.R')
+
+library("scales")
+library("grid")
+library("gridExtra")
+```
+
+```{r}
+## Data Summary
+
+load(file = "psy4100_master_data.RData")
+
+print(paste0("Total participants (includes Shinji's): ", total_subjects))
+print(paste0("Total participants (only MTurk): ", total_mturk_subjects))
+print(paste0("Total images (including 3 practice images):", length(included_img_ids)))
+
+# We ignore unlimited SOA (Alon's experiment)
+master_df <- master_raw_stem_df[soa != "Unlimited", ]
+
+# This is to replace the stem words with hyphen with the original.
+master_df[stem_word %like% "-,", stem_word := word ] 
+master_df[stem_word %like% ", -", stem_word := word ] 
+master_df[stem_word %like% "-, ", stem_word := word ] 
+
+# Also shift the confidence range.
+master_df$confidence <- master_df$confidence + 1
+```
+
+```{r }
+source('functions-type1auc_intersubjectivity.R')
+
+# Load the duplicate image ids.
+load('duplicate_similar_images.RData')
+
+# Calculate the image ids to exclude in the baseline (other sets) - only keep the main image (key)
+img_ids_to_exclude_in_baseline <- c()
+for (i in 1:nrow(duplicate_img_ids)) {
+  a_row <- duplicate_img_ids[i, ]
+  img_ids_to_exclude_in_baseline = c(img_ids_to_exclude_in_baseline, (setdiff(unlist(a_row$duplicate_set), list(a_row$img_id))))
+}
+
+```
+
+```{r, message=FALSE}
+# Build a giant list for all the image word data table based on image ids.
+all_image_ids <- unique(master_df$img_id)
+all_image_dfs <- NULL
+all_image_dfs <- vector(mode = "list", length = length(all_image_ids))
+for (img_index in 1:length(all_image_ids)) {
+  img_id <- all_image_ids[img_index]
+  img_df <- construct_subject_image_df(master_df, img_id, target_soa = 0)
+  all_image_dfs[[img_index]] <- img_df
+}
+```
+
+```{r, message=FALSE}
+
+all_img_type1auc <- data.table()
+target_img_id = 2277
+
+original_img_df <- all_image_dfs[[which(all_image_ids == target_img_id)]]
+
+# Get the other image dfs and also filter duplicate/similar images with this target_img_id
+# duplicate_img_ids$img_id == target_img_id
+# duplicate_for_this_image <- duplicate_img_ids[mapply(`%in%`, target_img_id, duplicate_set)]$duplicate_set # could be empty
+
+all_other_image_dfs <- all_image_dfs[which(!all_image_ids %in% c(target_img_id, img_ids_to_exclude_in_baseline))]
+print(sprintf("Baseline size = %d", length(all_other_image_dfs)))
+
+# if (length(unlist(duplicate_for_this_image)) > 0) {
+#   print(sprintf("Image %s has duplicate(s): %s. After excluding them, the baseline size is: %d", target_img_id, paste(duplicate_for_this_image), length(all_other_image_dfs)))
+# }
+
+#for (target_soa in c(67, 133, 267)) {
+for (target_soa in c(133)) {
+  #img_df <- original_img_df[soa == target_soa, ]
+  img_df <- original_img_df
+  other_image_dfs <- vector(mode = "list", length = length(all_other_image_dfs))
+  for (other_image_index in 1:length(all_other_image_dfs)) {
+    other_image_df <- all_other_image_dfs[[other_image_index]]
+    #other_image_df_filter_soa <- other_image_df[soa == target_soa, ]
+    other_image_dfs[[other_image_index]] <- other_image_df
+  }
+  
+  ## TEMPORARY ##
+  
+  img_df <- img_df[stem_word == "building", ]
+  
+  type1auc_df <- img_df[, .(type1auc = calculate_auc_img_sbj_word(img_df, other_image_dfs, target_img_id, as.String(stem_word), sbj_idx, soa, output_plot = TRUE, include_confidence = FALSE), 
+                            type1auc_weighted = calculate_auc_img_sbj_word(img_df, other_image_dfs, target_img_id, as.String(stem_word), sbj_idx, soa, output_plot = FALSE, include_confidence = TRUE)), 
+                        by=c("sbj_idx", "stem_word", "soa")]
+  
+  
+  type1auc_df_avg <- type1auc_df[, .(avg_type1auc = mean(type1auc), avg_type1auc_weighted = mean(type1auc_weighted)), by=c("stem_word", "soa")][order(-avg_type1auc)]
+  weighted_type1auc_df_avg <- type1auc_df_avg[avg_type1auc_weighted <= 0.5, .(stem_word, soa, avg_type1auc_weighted)]
+  
+  print(sprintf("Finished image %s.", target_img_id))
+}
+```
+
+```{r, }
+#load('all_img_type1auc.RData')
+load('all_img_type1auc_with_practice_exclude_duplicates.RData')
+all_img_type1auc <- result
+
+# Calculate the stem_word + img_id + count
+word_img_count_df <- data.table()
+
+for (idx in 1:length(all_image_ids)) {
+  img_id <- all_image_ids[idx]
+  cur_image_df <- all_image_dfs[[idx]]  
+  
+  word_img_count_df <- rbind(word_img_count_df, cur_image_df[, .(word_count = .N, mean_confidence = mean(.SD$confidence)), by=c("img_id", "soa", "stem_word")])
+}
+
+#all_img_type1auc <- all_img_type1auc[type1auc > 0.5, ]
+all_img_type1auc_subject <- all_img_type1auc
+
+all_img_type1auc <- all_img_type1auc[, .(avg_type1auc = mean(type1auc), avg_type1auc_weighted = mean(type1auc_weighted)), by=c("stem_word", "soa", "img_id")]
+all_img_type1auc$soa <- factor(all_img_type1auc$soa)
+all_df <- merge(all_img_type1auc, word_img_count_df, all = FALSE)
+
+mean_img_type1auc_no_count <- all_df[, .(auc = mean(avg_type1auc)), by=c("img_id", "soa")]
+all_mean_no_count <- mean_img_type1auc_no_count[,.(mean_auc=mean(auc)),by=c("soa")]
+
+mean_img_type1auc <- all_df[, .(auc = mean(avg_type1auc*word_count)), by=c("img_id", "soa")]
+mean_img_type1auc_weighted <- all_df[, .(auc = mean(avg_type1auc_weighted*word_count)), by=c("img_id", "soa")]
+all_mean <- mean_img_type1auc[,.(mean_auc=mean(auc)),by=c("soa")]
+
+ggplot(mean_img_type1auc_no_count, aes(x=auc, by=c("soa"))) +
+  geom_histogram() +
+  facet_grid( . ~ soa) +
+  xlab("Mean AUC (non-weighted)")
+
+dodge <- position_dodge(width = 0.8)
+ggplot(mean_img_type1auc_no_count, aes(x=soa, y=auc)) +
+  geom_violin(position = dodge) +
+  geom_boxplot(width=0.3, position = dodge) +
+  ylab("Mean AUC (non_weighted)")
+
+# all_img_ia <- all_df[, .(ia = sum(2*(.SD$avg_type1auc - 0.5))), by=c("img_id", "soa")]
+# ggplot(all_img_ia, aes(x=ia, by=c("soa"))) +
+#   geom_histogram() +
+#   facet_grid( . ~ soa) +
+#   xlab("Intersubjective Agreement (using non-weighted AUC)")
+# 
+# dodge <- position_dodge(width = 0.8)
+# ggplot(all_img_ia, aes(x=soa, y=ia)) +
+#   geom_violin(position = dodge) +
+#   geom_boxplot(width=0.3, position = dodge) + 
+#   ylab("Intersubjective Agreement (using non-weighted AUC)")
+
+
+```
+
+
+```{r }
+ggplot(mean_img_type1auc, aes(x=auc, by=c("soa"))) +
+  geom_histogram() +
+  facet_grid( . ~ soa) +
+  xlab("Mean AUC * Word Count (non-weighted)")
+
+dodge <- position_dodge(width = 0.8)
+ggplot(mean_img_type1auc, aes(x=soa, y=auc)) +
+  geom_violin(position = dodge) +
+  geom_boxplot(width=0.3, position = dodge) +
+  ylab("Mean AUC * Word Count (non_weighted)")
+
+#all_img_ia <- all_df[, .(ia = sum(2*(.SD$avg_type1auc)*word_count)), by=c("img_id", "soa")]
+all_img_ia <- all_df[, .(ia = sum(2*(.SD$avg_type1auc))), by=c("img_id", "soa")]
+ggplot(all_img_ia, aes(x=ia, by=c("soa"))) +
+  geom_histogram() +
+  facet_grid( . ~ soa) +
+  xlab("Intersubjective Agreement")
+
+dodge <- position_dodge(width = 0.8)
+ggplot(all_img_ia, aes(x=soa, y=ia)) +
+  geom_violin(position = dodge) +
+  geom_boxplot(width=0.3, position = dodge) + 
+  ylab("Intersubjective Agreement")
+```
+
+```{r }
+
+# Confidence weighted (with no word count)
+mean_img_type1auc_weighted_no_count <- all_df[, .(auc = mean(avg_type1auc_weighted)), by=c("img_id", "soa")]
+
+ggplot(mean_img_type1auc_weighted_no_count, aes(x=auc, by=c("soa"))) +
+  geom_histogram() +
+  facet_grid( . ~ soa) +
+  xlab("Mean AUC (confidence-weighted)")
+
+dodge <- position_dodge(width = 0.8)
+ggplot(mean_img_type1auc_weighted_no_count, aes(x=soa, y=auc)) +
+  geom_violin(position = dodge) +
+  geom_boxplot(width=0.3, position = dodge) +
+  ylab("Mean AUC (confidence-weighted)")
+
+```
+
+```{r }
+# Confidence weighted (with word count)
+
+mean_img_type1auc_weighted <- all_df[, .(auc = mean(avg_type1auc_weighted*word_count)), by=c("img_id", "soa")]
+
+ggplot(mean_img_type1auc_weighted, aes(x=auc, by=c("soa"))) +
+  geom_histogram() +
+  facet_grid( . ~ soa) +
+  xlab("Mean AUC (confidence-weighted) * word count")
+
+dodge <- position_dodge(width = 0.8)
+ggplot(mean_img_type1auc_weighted, aes(x=soa, y=auc)) +
+  geom_violin(position = dodge) +
+  geom_boxplot(width=0.3, position = dodge) +
+  ylab("Mean AUC (confidence-weighted) * word count")
+
+# all_img_ia <- all_df[, .(ia = sum(2*(.SD$avg_type1auc_weighted-0.5)*word_count)), by=c("img_id", "soa")]
+# ggplot(all_img_ia, aes(x=ia, by=c("soa"))) +
+#   geom_histogram() +
+#   facet_grid( . ~ soa) +
+#   xlab("Intersubjective Agreement")
+# 
+# dodge <- position_dodge(width = 0.8)
+# ggplot(all_img_ia, aes(x=soa, y=ia)) +
+#   geom_violin(position = dodge) +
+#   geom_boxplot(width=0.3, position = dodge) + 
+#   ylab("Intersubjective Agreement")
+```
+
+```{r }
+# Compare different AUC variations
+
+mean_img_type1auc <- all_df[, .(
+  auc_non_weighted_no_count = mean(avg_type1auc), 
+  auc_non_weighted_count = mean(avg_type1auc * word_count),
+  auc_weighted_no_count = mean(avg_type1auc_weighted),
+  auc_weighted_count = mean(avg_type1auc_weighted * word_count)), by=c("img_id", "soa")]
+mean_img_type1auc_compare <- melt(mean_img_type1auc, id.vars = c("img_id", "soa"), 
+                                  measure.vars = c("auc_non_weighted_count", "auc_weighted_count"))
+
+dodge <- position_dodge(width = 0.8)
+ggplot(mean_img_type1auc_compare, aes(x=soa, y=value, colour=variable)) +
+  geom_violin(position = dodge) +
+  geom_boxplot(width=0.3, position = dodge) +
+  ylab("AUC * frequency")
+
+ggplot(mean_img_type1auc, aes(x=auc_weighted_no_count , y=auc_weighted_count)) +
+  geom_point() +
+  geom_smooth(method=lm, se=FALSE) +
+  stat_cor() +
+  xlab("AUC (eighted)") +
+  ylab("AUC * frequency (weighted)") +
+  facet_grid(. ~ soa)
+```
+
+```{r, }
+colours <- all_df[stem_word %in% c("red", "black", "yellow", "blue", "grey", "gray", "purple", "white", "brown", "green"), .(total_count = sum(word_count)), by=c("soa")]
+colours_type1auc_count <- all_df[stem_word %in% c("red", "black", "yellow", "blue", "grey", "gray", "purple", "white", "brown", "green"), .(auc = mean(avg_type1auc * word_count)), by=c("img_id", "soa")]
+
+colours_weighted_type1auc_count <- all_df[stem_word %in% c("red", "black", "yellow", "blue", "grey", "gray", "purple", "white", "brown", "green"), .(auc_weighted = mean(avg_type1auc_weighted * word_count)), by=c("img_id", "soa")]
+
+ggplot(colours, aes(x=soa, y=total_count, group=1)) +
+  geom_point(size = 3) +
+  geom_line() +
+  ylab("Total word count") +
+  ggtitle('red,black,yellow,blue,grey,gray,purple,white,brown,green')
+
+dodge <- position_dodge(width = 0.8)
+ggplot(colours_type1auc_count, aes(x=soa, y=auc)) +
+  geom_violin() +
+  geom_boxplot(width=0.2, position = dodge) +
+  ylab("Non-weighted AUC * frequency") +
+  ggtitle('red,black,yellow,blue,grey,gray,purple,white,brown,green')
+  
+ggplot(colours_weighted_type1auc_count, aes(x=soa, y=auc_weighted)) +
+  geom_violin() +
+  geom_boxplot(width=0.2, position = dodge) +
+  ylab("Weighted AUC * frequency") +
+  ggtitle('red,black,yellow,blue,grey,gray,purple,white,brown,green')
+```
+
+```{r, }
+# Top X
+all_img_ia=all_df[, .(ia = mean(avg_type1auc_weighted)), by=c("img_id", "soa")]
+top_ia = head(all_img_ia[,.(ia = mean(ia)), by=c("img_id")][order(-ia)], 5)
+bottom_ia = head(all_img_ia[,.(ia = mean(ia)), by=c("img_id")][order(ia)], 5)
+
+top_ia_67 = head(all_img_ia[soa == 67,][order(-ia)], 5)
+top_ia_133 = head(all_img_ia[soa == 133,][order(-ia)], 5)
+top_ia_267 = head(all_img_ia[soa == 267,][order(-ia)], 5)
+
+bottom_ia_67 = head(all_img_ia[soa == 67,][order(ia)], 5)
+bottom_ia_133 = head(all_img_ia[soa == 133,][order(ia)], 5)
+bottom_ia_267 = head(all_img_ia[soa == 267,][order(ia)], 5)
+
+
+```
+
+```{r, }
+posx <- 0
+posy <- 100
+SOA=267
+target_df <- head(mean_img_type1auc_weighted[soa==SOA, ][order(-auc)], 5)
+
+
+p <- ggplot(data.frame()) + geom_point() + 
+  xlim(0, 100) + ylim(0, 100) +
+  theme(axis.text = element_blank())
+  
+for (i in 1:nrow(target_df)) {
+  img_id <- target_df[i, ]$img_id
+  
+  p <- p + annotation_raster(get_image_by_id(nishimoto_images_folder, img_id), ymin = posy, ymax=posy - 20, xmin=posx, xmax=posx + 30)
+      
+  posy <- posy - 20
+    
+  if (posx >=100) {
+    posx <- 0
+  }
+  
+  if (posy <= 0) {
+    posy <- 100
+    posx <- posx + 30
+  }
+}
+
+ggsave(paste0('test', as.String(i), '.png'))
+
+## To find the top X words
+for (img in target_df$img_id) {
+  a<-head(all_df[img_id %in% c(img) & soa == SOA, .(auc = mean(avg_type1auc_weighted) * word_count), by=c("stem_word")][order(-auc)], 5)
+  str = ""
+  
+  for (i in (1:nrow(a))) {
+    str <- paste0(str, ', ' , a[i, ]$stem_word, ' (', round(a[i, 'auc'], 3), ')')
+  }
+  
+  print(str)
+}
+```
+
+```{r }
+# Show the similarity of IA between duplicate images.
+
+for (i in 1:nrow(duplicate_img_ids)) {
+  a_row <- unlist(duplicate_img_ids[i, ]$duplicate_set)
+  
+  merge_df <- data.table()
+  compare_df <- all_df[img_id %in% a_row, ]
+  collapse_soa_df <- compare_df[, .(ia = mean(avg_type1auc)), by=c("stem_word", "img_id")]
+
+  all_unique_words <- unique(collapse_soa_df$stem_word)
+  
+  for (img_idx in 1:length(a_row)) {
+    image_id <- a_row[img_idx]
+    
+    merge_df <- rbind(merge_df, merge(collapse_soa_df[img_id == image_id, ], data.table(stem_word = all_unique_words, img_id = image_id), all.y=TRUE, by=c("stem_word", "img_id")))
+  }
+  
+  # merge_df$img_id.x <- NULL
+  # merge_df$img_id.y <- NULL
+  merge_df$img_id <- as.factor(merge_df$img_id)
+  merge_df$stem_word <- factor(merge_df$stem_word, levels = unique(merge_df[order(-ia)]$stem_word))
+  merge_df[is.na(merge_df)] <- 0
+
+  #merge_df$stem_word_ordered <- factor(merge_df$stem_word, levels = merge_df$stem_word[order(-merge_df$ia)])
+  g <- ggplot(merge_df,aes(x=stem_word, y=ia, color=img_id, fill=img_id, group=img_id)) + 
+    geom_histogram(stat = 'identity') +
+    theme_bw() +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+    facet_grid(rows = vars(img_id))
+  
+  ## Calculate JSD between these images
+  jsd_matrix = matrix(nrow = length(a_row), ncol = length(unique(g$data$stem_word)))
+  posy = 1.0
+  posx = length(unique(g$data$stem_word)) - 20
+  for (img_idx in 1:length(a_row)) {
+    image_id <- a_row[img_idx]
+    g <- g + annotation_raster(get_image_by_id(nishimoto_images_folder, image_id), ymin = posy, ymax=posy - 0.2, xmin=posx, xmax=posx + 5)
+    posx <- posx + 5.5
+
+    ia_ordered <- g$data[img_id == image_id, ][order(stem_word)]$ia
+    ia_norm_ordered <- ia_ordered/sum(ia_ordered)
+    jsd_matrix[img_idx, ] <- ia_norm_ordered
+  }  
+  
+  jsd <- JSD(jsd_matrix)
+  all_comb <- combn(length(a_row), 2)
+  
+  jsd_mesg <- ""
+  
+  if (length(jsd) > 1) {
+    for (cidx in 1:ncol(all_comb)) {
+      first_idx = all_comb[1, cidx]
+      second_idx = all_comb[2, cidx]
+      
+      jsd_mesg <- paste0(jsd_mesg, "\n", sprintf("JSD(%d, %d)=%.4f", a_row[first_idx], a_row[second_idx], jsd[first_idx, second_idx]))
+    }
+  }  else {
+      jsd_mesg <- paste0(sprintf("JSD(%d, %d)=%.4f", a_row[1], a_row[2], jsd))
+  }
+  
+  g <- g + geom_text(x = length(unique(g$data$stem_word)) - 20, y = 0.75, label = jsd_mesg, color="black")
+  
+  h <- 8
+  ar <- 2.1
+  ggsave(g, height=h, width= h*ar, filename = paste0("img_duplicate_ia_", a_row[1], ".png"))   
+
+  print(paste0("Done for img set: ", paste0(a_row, collapse = ", ")))
+}
+
+
+
+
+```
+
+
+```{r, }
+# Display all images
+
+p <- ggplot(data.frame()) + geom_point() + 
+  xlim(0, 100) + ylim(0, 100) +
+  theme(axis.text = element_blank())
+
+posx <- 0
+posy <- 100
+
+img_ids <- all_image_ids[which(all_image_ids < 9999000)]
+for (i in 1:length(img_ids)) {
+  img_id <- img_ids[i]
+  
+  p <- p + annotation_raster(get_image_by_id(nishimoto_images_folder, img_id), ymin = posy, ymax=posy - 3, xmin=posx, xmax=posx + 5)
+  
+  posx <- posx + 5.25
+
+  if (posx >=78) {
+    posx <- 0
+    posy <- posy - 3.25
+  }
+  
+  if (posy <= 0) {
+    posy <- 100
+    #posx <- posx + 30
+  }  
+}
+
+ggsave(paste0('all-natural-stimuli.png'))
+
+```
+
+```{r, }
+#all_img_soa <- all_img_ia[,.(ia = mean(ia)), by=c("img_id") ]
+all_img_soa <- all_img_ia[soa == 267, ]
+all_img_soa <- all_img_soa[img_id < 9999000, ]
+img_ids <- unique(all_img_soa$img_id)
+sm_67_dist <- dist(all_img_soa)
+sm_67 <- as.matrix(sm_67_dist)
+rownames(sm_67) <- unique(all_img_soa$img_id)
+colnames(sm_67) <- unique(all_img_soa$img_id)
+
+htree <- hclust(sm_67_dist, method = "complete")
+img_clust_ids <- img_ids[htree$order]
+img_clusts <- cutree(htree, k=2)
+img_cluster_df <- data.table(img_id = img_clust_ids, cluster = img_clusts)
+
+fit <- cmdscale(sm_67_dist, eig=TRUE, k=2)
+
+
+```
+
+```{r, }
+library("plot3D")
+library("car")
+library("rgl")
+
+
+x <- fit$points[,1]
+y <- fit$points[,2]
+z <- fit$points[,3]
+scatter3d(x, y, z,
+          surface=FALSE,
+          grid=T,
+          sphere.size=2,
+          ellipsoid=FALSE,
+          axis.ticks=TRUE,
+          xlab="x",
+          ylab="y",
+          zlab="z")
+
+x_scale=0.2
+y_scale=0.2
+
+# for (i in 1:5) {
+# 
+#   img <- get_image_by_id(nishimoto_images_folder, img_ids[i])
+#   img <- image_convert(img, "png")
+#   #img <- image_scale(img, "200")
+#   
+#   img_path <- paste0("/Users/Zhao/Temp/temp_", img_ids[i], ".png")
+#   image_write(img, path = img_path, format = "png")
+#   
+#   img_width <- dim(image_data(img))[2]
+#   img_height <- dim(image_data(img))[3]
+# 
+#   # xvek <- c(fit$points[i,1]-scale*img_width,fit$points[i,1]+scale*img_width)
+#   # yvek <- c(fit$points[i,2]-scale*2*img_height,fit$points[i,2]+scale*2*img_height)
+#   # lnx <- length(xvek)
+#   # lny <- length(yvek)
+#   # zmat <- matrix(fit$points[i,3],lnx,lny)
+#   # 
+#   x_int = max(fit$points[, 1])-min(fit$points[, 1])
+#   y_int = max(fit$points[, 2])-min(fit$points[, 2])
+#   
+#   xvek <- c(fit$points[i,1],fit$points[i,1]+20)
+#   yvek <- c(fit$points[i,2],fit$points[i,2]+0.1)
+#   lnx <- length(xvek)
+#   lny <- length(yvek)
+#   zmat <- matrix(fit$points[i,3],lnx,lny)
+# 
+#     # Setup the Texture coordinates - defaults seem to invert image
+#   # tms <- matrix(c(0,0,1,1),lnx,lny) # generic case (xy-maped texture looks like png file)
+#   # tmt <- matrix(c(0,1,0,1),lnx,lny)   
+#   
+#   tmt <- matrix(c(0,0,1,1),lnx,lny) # "correct case" (ball density look more like picture)
+#   tms <- matrix(c(0,1,0,1),lnx,lny) # I think the gameshot.png is in error  
+#   
+#   #surface3d(xvek,yvek,zmat, lit=F,fog=F,color="white",textype="rgb",texture=img_path,add=T)
+# }
+
+```
+
+```{r, }
+h <- 1000
+ar <- 1.5
+png("test.png", width = h*ar, height = h)
+
+x <- fit$points[,1]
+y <- fit$points[,2]
+plot(jitter(x, 1), y, xlab="Dimension 1", ylab="Dimension 2",
+   main=sprintf("MDS on IA", 67))
+
+x_scale=1.5
+y_scale=1/500
+
+for (i in 1:nrow(fit$points)) {
+#for (i in 1:10) {
+  img <- get_image_by_id(nishimoto_images_folder, img_ids[i])
+  img <- image_scale(img, "100")
+  img_width <- dim(image_data(img))[2]
+  img_height <- dim(image_data(img))[3]
+  # rasterImage(img, xleft = fit$points[i,1] , xright=fit$points[i,1]+x_scale*img_width,
+  #             ytop = fit$points[i,2]+y_scale*img_height, ybottom = fit$points[i,2], interpolate=FALSE)
+  rasterImage(img, xleft = fit$points[i,1] - x_scale*img_width, xright=fit$points[i,1] + x_scale*img_width,
+             ytop = fit$points[i,2] + img_height*y_scale, ybottom = fit$points[i,2] - img_height*y_scale, interpolate=FALSE)
+}
+
+dev.off()
+
+```
+
+```{r, }
+  
+select_color_by_auc <- function(auc_value) {
+  # https://colorbrewer2.org/#type=diverging&scheme=RdYlBu&n=3
+#    colormap <- brewer_pal(type = 'div', palette = "RdYlBu")
+  colormap <- brewer_pal(type = 'seq', palette = "GnBu")
+  colormap_vals <- colormap(5)
+  
+  color <- colormap_vals[5]
+  if (auc_value > 0 && auc_value <= 0.5) {
+    color <- colormap_vals[1]
+  } else if (auc_value > 0.5 && auc_value <= 0.70) {
+    color <- colormap_vals[2]
+  } else if (auc_value > 0.70 && auc_value <= 0.8) {
+    color <- colormap_vals[3]
+  } else if (auc_value > 0.80) {
+    color <- colormap_vals[4]
+  }
+  
+  return(color)
+}   
+  
+
+```
+
+```{r, }
+load('all_img_type1auc.RData')
+
+target_img_id <- 2277
+table_df <- all_img_type1auc[img_id == target_img_id, ][order(soa, sbj_idx, type1auc)]
+img <- get_image_by_id(nishimoto_images_folder, target_img_id)
+img <- image_scale(img, "200")
+
+table_df[, word_index := paste0("word_", 1:.N), by=c("soa", "sbj_idx")]
+table_df[, word_color_index := paste0("word_color_", 1:.N), by=c("soa", "sbj_idx")]
+table_df[, color := select_color_by_auc(type1auc), by=c("soa", "sbj_idx", "word_index")]
+
+wide_table_word_df <- spread(table_df[, c("soa", "sbj_idx", "word_index", "stem_word")], word_index, stem_word)
+wide_table_word_color_df <- spread(table_df[, c("soa", "sbj_idx", "word_color_index", "color")], word_color_index, color)
+
+soa_67 <- wide_table_word_df[soa=="67", c("sbj_idx", "word_1", "word_2", "word_3", "word_4", "word_5")]
+word_color_67 <- as.matrix(wide_table_word_color_df[soa=="67", c("word_color_1", "word_color_2", "word_color_3", "word_color_4", "word_color_5")])
+
+soa_133 <- wide_table_word_df[soa=="133", c("sbj_idx", "word_1", "word_2", "word_3", "word_4", "word_5")]
+word_color_133 <- as.matrix(wide_table_word_color_df[soa=="133", c("word_color_1", "word_color_2", "word_color_3", "word_color_4", "word_color_5")])
+
+soa_267 <- wide_table_word_df[soa=="267", c("sbj_idx", "word_1", "word_2", "word_3", "word_4", "word_5")]
+word_color_267 <- as.matrix(wide_table_word_color_df[soa=="267", c("word_color_1", "word_color_2", "word_color_3", "word_color_4", "word_color_5")])
+
+# The following only simulate a plot with colorbar with the intention to extract the colorbar.
+p_lgd <- ggplot(data.table(col_a=1:4, col_b=factor(1:4)),aes(x=col_a, y=col_b, fill=col_b)) +
+  geom_bar(stat = 'identity') +
+  scale_fill_brewer(type = 'seq', palette = "GnBu", labels = c("[0, 0.5)", "[0.5, 0.7)", "[0.7, 0.8)", "[0.8, 1.0]"), direction=1, name="Degree of Commonality")
+
+lgd <- get_legend(p_lgd)
+
+# New theme paramters
+  theme_67 <- ttheme_minimal(core=list(bg_params = list(fill = cbind('white', word_color_67)), col=NA)) #fg_params=list(fontface=3)),
+  theme_133 <- ttheme_minimal(core=list(bg_params = list(fill = cbind('white', word_color_133)), col=NA)) #fg_params=list(fontface=3)),
+  theme_267 <- ttheme_minimal(core=list(bg_params = list(fill = cbind('white', word_color_267)), col=NA)) #fg_params=list(fontface=3)),
+
+  g <- grid.arrange(
+    grid.arrange(
+      ggplotGrob(ggplot()),
+      ggplotGrob(ggplot() + annotation_custom(rasterGrob(img, interpolate = FALSE))),
+      lgd,
+      nrow = 1, widths=c(0.1, 0.3, 0.1, 0.4), padding = 0),
+    ggplotGrob(ggplot()),
+    grid.arrange(
+      tableGrob(soa_67[, c("sbj_idx", "word_1", "word_2", "word_3", "word_4", "word_5")], theme=theme_67, cols = NULL, rows = NULL),
+      tableGrob(soa_133[, c("sbj_idx", "word_1", "word_2", "word_3", "word_4", "word_5")], theme=theme_133, cols = NULL, rows = NULL),
+      tableGrob(soa_267[, c("sbj_idx", "word_1", "word_2", "word_3", "word_4", "word_5")], theme=theme_267, cols = NULL, rows = NULL),
+    nrow = 1, widths=c(1, 1, 1), padding = 0),
+    ncol = 1, heights=c(0.15, 0.05, 0.4, 0.4), padding=0
+  );  
+
+h <- 8
+ar <- 2.1
+ggsave(g, height=h, width= h*ar, filename = paste0("img_", target_img_id, "_sample_words_auc.png"))
+  
+```

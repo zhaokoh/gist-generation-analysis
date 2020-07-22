@@ -1,0 +1,151 @@
+---
+title: "Analysis"
+subtitle: "MTurk Analysis - `r format(Sys.time(), '%d %B, %Y')`"
+geometry: left=2cm,right=2cm,top=2cm,bottom=2cm
+output:
+  pdf_document:
+    latex_engine: xelatex
+  html_document:
+    df_print: paged
+header-includes: \usepackage{xcolor}
+---
+
+```{r include=FALSE, echo=FALSE, message=FALSE}
+source('embed_import_libraries.R')
+
+library("scales")
+library("grid")
+library("gridExtra")
+```
+
+```{r}
+## Data Summary
+
+load(file = "psy4100_master_data.RData")
+
+print(paste0("Total participants (includes Shinji's): ", total_subjects))
+print(paste0("Total participants (only MTurk): ", total_mturk_subjects))
+print(paste0("Total images (including 3 practice images):", length(included_img_ids)))
+
+# Function
+
+add_image_to_plot <- function(plt, img) {
+  q1 <- ggplot() + annotation_custom(rasterGrob(img, interpolate = FALSE))
+  
+  p2 <- ggplotGrob(plt)
+  q2 <- ggplotGrob(q1)
+  
+  gt <- gtable(widths = unit(c(1, 1, .4), "null"), heights = unit(c(.8, 1, 1), "null"))
+  gt <- gtable_add_grob(gt, p2, t = 1, b = 3, l = 1, r = 3)
+  gt <- gtable_add_grob(gt, q2, t = 1, l = 3)
+
+  return(gt)
+}
+
+master_df <- master_raw_stem_df[soa != "Unlimited", ]
+
+# This is to replace the stem words with hyphen with the original.
+master_df[stem_word %like% "-,", stem_word := word ] 
+master_df[stem_word %like% ", -", stem_word := word ] 
+master_df[stem_word %like% "-, ", stem_word := word ]
+
+all_image_ids <- unique(master_df$img_id)
+```
+
+```{r, message=FALSE}
+
+# Ignore  practice images
+master_df <- master_df[!img_id %in% c(3, 9, 14)]
+img_soa_subject <- master_df[, .(subject_count = length(unique(.SD$subject))), by=c("img_id", "soa")]
+
+calculate_ia_by_cr <- function(img_df, target_img_id, plot_figure = FALSE) {
+  all_img_cr_intra <- data.table()
+  all_img_cr_inter <- data.table()
+
+  unique_words <- unique(img_df$stem_word)
+  
+  for (i in 1:length(unique_words)) {
+    target_word <- unique_words[i]
+    
+    # Calculate intra-agreement
+    word_df <- master_df[img_id == target_img_id & stem_word == target_word, 
+                         .(mean_confidence = mean(confidence), word_count = .N), by=c("img_id", "soa", "stem_word")]
+    word_df <- merge(word_df, img_soa_subject, by = c("img_id", "soa"), all.x = TRUE)
+    all_img_cr_intra <- rbind(all_img_cr_intra, word_df)
+    
+    # Calculate inter-agreement
+    word_other_df <- master_df[img_id != target_img_id & stem_word == target_word, .(mean_other_confidence = mean(confidence), word_count = .N), by=c("img_id", "soa", "stem_word")]
+    word_other_df <- merge(word_other_df, img_soa_subject, by = c("img_id", "soa"), all.x = TRUE)
+    all_img_cr_inter <- rbind(all_img_cr_inter, word_other_df)
+  }
+  
+  all_img_cr_intra$cr_intra <- all_img_cr_intra$word_count/all_img_cr_intra$subject_count
+  all_img_cr_intra$cr_intra_weighted <- (all_img_cr_intra$word_count/all_img_cr_intra$subject_count)*all_img_cr_intra$mean_confidence
+  all_img_cr_inter$cr_inter <- all_img_cr_inter$word_count/all_img_cr_inter$subject_count
+  all_img_cr_inter$cr_inter_weighted <- (all_img_cr_inter$word_count/all_img_cr_inter$subject_count)*all_img_cr_inter$mean_other_confidence
+  
+  all_img_cr_mean_inter <- all_img_cr_inter[, .(mean_cr_inter = mean(cr_inter), mean_cr_inter_weighted = mean(cr_inter_weighted)), by=c("soa", "stem_word")]
+  
+  all_img_ia = merge(all_img_cr_intra, all_img_cr_mean_inter, by=c("stem_word", "soa"), all.x = TRUE)
+  all_img_ia[is.na(mean_cr_inter), ]$mean_cr_inter <- 0
+  all_img_ia[is.na(mean_cr_inter_weighted), ]$mean_cr_inter_weighted <- 0
+  
+  all_img_ia$ia <- all_img_ia$cr_intra - all_img_ia$mean_cr_inter
+  all_img_ia$ia_weighted <- all_img_ia$cr_intra_weighted - all_img_ia$mean_cr_inter_weighted
+  
+  if (plot_figure) {
+    m_df <- melt(all_img_ia, id.vars = c("stem_word", "soa", "type"), measure.vars = c("cr_intra", "mean_cr_inter"))
+    
+    gg1<- ggplot(m_df[type == 'specific', ], aes(x=reorder(stem_word, -value), y=value, color=variable)) +
+      geom_point(size=3) +
+      scale_color_discrete(labels=c("CR(w,Y)","CR(w, -)")) +
+      xlab("Word") +
+      ylab("Value") +
+      theme_bw() +
+      theme(text = element_text(size=20), axis.text.x = element_text(angle = 90, vjust = 0.3)) + 
+      facet_grid(rows = vars(soa))
+    
+    gg2<- ggplot(m_df[type == 'general', ], aes(x=reorder(stem_word, -value), y=value, color=variable)) +
+      geom_point(size=3) +
+      scale_color_discrete(labels=c("CR(w,Y)","CR(w, -)")) +
+      xlab("Word") +
+      ylab("Value") +
+      theme_bw() +
+      theme(text = element_text(size=20), axis.text.x = element_text(angle = 90, vjust = 0.3)) + 
+      facet_grid(rows = vars(soa))
+    
+    h <- 8
+    ar <- 2.5
+      
+    ggsave(gg1, height=h, width= h*ar, filename = paste0("ia_cr_", target_img_id, "_specific.png"))
+    ggsave(gg2, height=h, width= h*ar, filename = paste0("ia_cr_", target_img_id, "_general.png"))
+    
+    print(sprintf("Mean IA [67=%.4f, 133=%.4f, 267=%.4f]", 
+                  mean(all_img_ia[img_id == target_img_id & soa == 67, ]$ia), 
+                  mean(all_img_ia[img_id == target_img_id & soa == 133, ]$ia),
+                  mean(all_img_ia[img_id == target_img_id & soa == 267, ]$ia)
+    ))
+  }
+  
+  return (all_img_ia)
+}
+
+all_ia_cr <- data.table()
+target_image_ids <- all_image_ids[which(!all_image_ids %in% c(3, 9, 14))]
+
+target_image_ids <- c(63)
+for (target_img_id in target_image_ids) {
+  #target_img_id = 2277 # Eiffel tower
+  img_df <- master_df[img_id == target_img_id, ]
+  all_ia_cr <- rbind(all_ia_cr, calculate_ia_by_cr(img_df, target_img_id, plot_figure = FALSE))
+  print(sprintf("Completed image %s...", target_img_id))
+}
+
+
+```
+
+
+
+
+
+

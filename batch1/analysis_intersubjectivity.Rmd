@@ -1,0 +1,504 @@
+---
+title: "Analysis"
+subtitle: "MTurk Analysis - `r format(Sys.time(), '%d %B, %Y')`"
+geometry: left=2cm,right=2cm,top=2cm,bottom=2cm
+output:
+  pdf_document:
+    latex_engine: xelatex
+  html_document:
+    df_print: paged
+header-includes: \usepackage{xcolor}
+---
+
+```{r include=FALSE, echo=FALSE, message=FALSE}
+source('embed_import_libraries.R')
+source('embed_configuration.R')
+
+# Functions
+source('function-analyse_single_image_kl_divergence.R')
+source('function-analyse_plot_single_image.R')
+source('function-aggregate_word_column.R')
+source('function-calculate_kl_for_dataframe.R')
+source('function-compute_kl.R')
+source('function-compute_pairwise_kl.R')
+source('function-image_utilities.R')
+source('function-load_alon_descriptors.R')
+source('function-load_data.R')
+source('function-load_subject_data.R')
+source('function-plot_kl_divergence.R')
+source('function-plot_word_cloud.R')
+source('function-utilities.R')
+source('function-validate_img_soa_group_numbers.R')
+
+library("scales")
+library("grid")
+library("gridExtra")
+```
+
+```{r}
+## Data Summary
+
+load(file = "psy4100_master_data.RData")
+
+print(paste0("Total participants (includes Shinji's): ", total_subjects))
+print(paste0("Total participants (only MTurk): ", total_mturk_subjects))
+print(paste0("Total images (including 3 practice images):", length(included_img_ids)))
+
+# Function
+
+add_image_to_plot <- function(plt, img) {
+  q1 <- ggplot() + annotation_custom(rasterGrob(img, interpolate = FALSE))
+  
+  p2 <- ggplotGrob(plt)
+  q2 <- ggplotGrob(q1)
+  
+  gt <- gtable(widths = unit(c(1, 1, .4), "null"), heights = unit(c(.8, 1, 1), "null"))
+  gt <- gtable_add_grob(gt, p2, t = 1, b = 3, l = 1, r = 3)
+  gt <- gtable_add_grob(gt, q2, t = 1, l = 3)
+
+  return(gt)
+}
+
+master_df <- master_raw_stem_df[soa != "Unlimited", ]
+
+# This is to replace the stem words with hyphen with the original.
+master_df[stem_word %like% "-,", stem_word := word ] 
+master_df[stem_word %like% ", -", stem_word := word ] 
+master_df[stem_word %like% "-, ", stem_word := word ] 
+
+```
+
+```{r }
+# Main execution function
+target_img_id = 2277
+#analyse_one_image_words_confidence <- function(master_df, target_img_id) {
+
+  soa_subject_df <- unique(master_df[img_id == target_img_id, subject, by=c("soa")])
+  
+  if (nrow(soa_subject_df) == 0) {
+    warning(sprintf("No data found for image %d", target_img_id))
+    return(NULL)
+  }
+  
+  soa_subject_count_df <- soa_subject_df[, .(subject_count = .N), by=c("soa")]
+  #max_subject_per_soa <- min(soa_subject_count_df$subject_count);
+  max_subject_per_soa <- 10
+  
+  ## Pre-process data set (label each subject index)
+  img_df <- master_df[img_id == target_img_id, ]
+  
+  img_df$sbj_idx <- 0
+  img_df$total_agreements <- 0
+  img_df$no_of_agreements <- 0
+  
+  for (a_soa in unique(img_df$soa)) { 
+    
+    # Trim subjects (This need to come before allocating subjects)
+    soa_df <- img_df[soa == a_soa, ]
+    subject_ids <- unique(soa_df$subject)
+    unique_subject_count <- length(subject_ids)
+    
+    if (unique_subject_count > max_subject_per_soa) {
+      all_sbj_ids <- unique(soa_df$subject)
+      exclude_sbj_ids <- all_sbj_ids[max_subject_per_soa+1:length(all_sbj_ids)]
+      
+      img_df <- img_df[!(subject %in% exclude_sbj_ids), ]
+      print(sprintf("[Dropping subjects] SOA %s has %d subjects, max subject is %d.", a_soa, unique_subject_count, max_subject_per_soa))
+    }
+  
+    # Allocate subject index
+    subject_ids <- unique(soa_df$subject)
+    for (sbj_indices in 1:length(subject_ids)) {
+      img_df[subject == subject_ids[sbj_indices], ]$sbj_idx <- sbj_indices
+    }
+  }
+
+  # ------------------------------------
+  # Analyse the hit rate
+  
+  all_plots <- list()
+  all_agg_data <- data.table()
+  
+  plot_count <- 1
+  
+  for (target_soa in c("67", "133", "267")) {
+    img_soa_df <- img_df[soa == target_soa, ]
+  
+    unique_stem_words_sbj <- img_soa_df[, .(unique_stem_words = length(unique(.SD$stem_word))), by=c("subject")]
+    img_soa_df <- merge(img_soa_df, unique_stem_words_sbj, by="subject")
+    unique_sbj_ids <- unique(img_soa_df$subject)
+  
+    for (i in 1:length(unique_sbj_ids)) {
+      
+      sbj <- unique_sbj_ids[i]
+      curr_sbj_index <- unique(img_soa_df[subject == sbj, ]$sbj_idx)
+      
+      curr_sbj_words_conf <- img_soa_df[subject == sbj,  c("stem_word", "confidence")]
+      
+      others_df <- rbind(
+        img_df[soa == target_soa & sbj_idx != curr_sbj_index, ],
+        img_df[soa != target_soa & sbj_idx != curr_sbj_index, ])
+      
+      others_sbj_words_df <- unique(others_df[, c("soa", "sbj_idx", "stem_word")])
+      img_soa_df[subject == sbj, ]$total_agreements <- nrow(unique(others_sbj_words_df[, c("soa", "sbj_idx")]))
+      
+      match_word_count_df <- others_sbj_words_df[stem_word %in% curr_sbj_words_conf$stem_word, .(count = .N), by=c("stem_word")]
+      merge_df <- merge(img_soa_df[subject == sbj, ], match_word_count_df, by='stem_word', all.x = TRUE)
+      img_soa_df[subject == sbj, ][order(stem_word)]$no_of_agreements <- replace_na(merge_df[order(stem_word)]$count, 0)
+    }
+    
+    img_soa_df$hit_perc <- img_soa_df[, .(no_of_agreements/total_agreements*100)]
+    avg_hits <- mean(img_soa_df[,.(hit_per=mean(hit_perc)) ,by=c("subject")]$hit_per)
+  
+    g <- ggplot(img_soa_df[, .(mean_hit_perc = mean(hit_perc)), by=c("subject")], aes(x=subject, y=mean_hit_perc)) +
+      geom_histogram(stat = "identity") + 
+      ylab("Hit percentage (%)") +
+      xlab("Subject") +
+      ggtitle(sprintf("%s ms, Mean: %.2f%%", target_soa, avg_hits)) +
+      scale_x_discrete("subject id", labels = c(1:length(unique_sbj_ids))) +
+      scale_y_continuous(expand = c(0, 0))
+    
+    #print(g)
+    all_agg_data <- rbind(all_agg_data, img_soa_df)
+    all_plots[[plot_count]] <- g
+    plot_count <- plot_count + 1
+    
+    #write.csv(all_agg_data[, c("subject", "img_id", "soa", "stem_word", "sbj_idx", "total_agreements", "no_of_agreements", "hit_perc")], file=paste("img_", target_img_id, "_subject_words.csv"))
+  }
+  
+  img <- get_image_by_id(nishimoto_images_folder, target_img_id)
+  img <- image_scale(img, "200")
+  img_width <- dim(image_data(img))[2]
+  img_height <- dim(image_data(img))[3]
+  
+  gg <- ggarrange(all_plots[[1]], all_plots[[2]], all_plots[[3]], nrow = 1, ncol=4)
+  gt <- add_image_to_plot(gg, img)
+  
+  h <- 6
+  ar <- 2.5
+  ggsave(gt, height=h, width= h*ar, filename = paste0("img_", target_img_id, "_hit_rate.png"))
+
+  # --------------------------
+  # Here we can plot based on confidence threshold.
+
+  # all_conf_threshold <- rbind(
+  #   all_agg_data[confidence >= 4, .(mean_hit_perc = mean(hit_perc), threshold=4), by=c("subject", "soa")], 
+  #   all_agg_data[confidence >= 3, .(mean_hit_perc = mean(hit_perc), threshold=3), by=c("subject", "soa")], 
+  #   all_agg_data[confidence >= 2, .(mean_hit_perc = mean(hit_perc), threshold=2), by=c("subject", "soa")], 
+  #   all_agg_data[confidence >= 1, .(mean_hit_perc = mean(hit_perc), threshold=1), by=c("subject", "soa")], 
+  #   all_agg_data[confidence >= 0, .(mean_hit_perc = mean(hit_perc), threshold=0), by=c("subject", "soa")])
+  # 
+  # 
+  # ggplot(all_conf_threshold[soa == 67,], aes(x=threshold, y=mean_hit_perc, colour=subject)) +
+  #   geom_point() + geom_line() +
+  #   scale_x_reverse() + 
+  #   ylab("Mean Hit Rate(%)") +
+  #   xlab("Confidence >= X")
+  # 
+  # ggplot(all_conf_threshold[soa == 133,], aes(x=threshold, y=mean_hit_perc, colour=subject)) +
+  #   geom_point() + geom_line() +
+  #   scale_x_reverse() + 
+  #   ylab("Mean Hit Rate(%)") +
+  #   xlab("Confidence >= X")
+  # 
+  # ggplot(all_conf_threshold[soa == 267,], aes(x=threshold, y=mean_hit_perc, colour=subject)) +
+  #   geom_point() + geom_line() +
+  #   scale_x_reverse() + 
+  #   ylab("Mean Hit Rate(%)") +
+  #   xlab("Confidence >= X")
+  # 
+  # ggplot(all_conf_threshold[, .(m=mean(mean_hit_perc)), by=c("soa", "threshold")][order(soa)], aes(x=threshold, y=m, colour=soa)) +
+  #   geom_point() + geom_line() +
+  #   scale_x_reverse() +
+  #   ylab("Mean Hit Rate(%)") +
+  #   xlab("Confidence >= X")
+
+  # ----------------------- 
+  select_color_by_hit_percentage <- function(perc_value) {
+    # https://colorbrewer2.org/#type=diverging&scheme=RdYlBu&n=3
+#    colormap <- brewer_pal(type = 'div', palette = "RdYlBu")
+    colormap <- brewer_pal(type = 'seq', palette = "PuRd")
+    colormap_vals <- colormap(5)
+    
+    color <- colormap_vals[1]
+    # if (perc_value > 0 && perc_value < 25) {
+    #   color <- colormap_vals[2]
+    # } else if (perc_value >= 25 && perc_value < 50) {
+    #   color <- colormap_vals[3]
+    # } else if (perc_value >= 50 && perc_value < 75) {
+    #   color <- colormap_vals[4]
+    # } else if (perc_value >=75) {
+    #   color <- colormap_vals[5]
+    # }
+    
+    return(color)
+  }
+
+  select_color_by_confidence <- function(value) {
+    # https://colorbrewer2.org/#type=diverging&scheme=RdYlBu&n=3
+    colormap <- brewer_pal(type = 'seq', palette = "GnBu")
+    colormap_vals <- colormap(5)
+    
+    color <- colormap_vals[1]
+    if (value == 1) {
+      color <- colormap_vals[2]
+    } else if (value == 2) {
+      color <- colormap_vals[3]
+    } else if (value == 3) {
+      color <- colormap_vals[4]
+    } else if (value == 4) {
+      color <- colormap_vals[5]
+    }
+    
+    return(color)
+  }  
+```
+  
+  
+```{r eval=FALSE, include=FALSE}
+  # ------------------------
+  # Draw table (Hit Percentage)
+
+  # table_df <- all_agg_data[order(soa, sbj_idx, hit_perc)][, c("soa", "subject", "sbj_idx", "stem_word", "confidence", "hit_perc")]
+  # 
+  # table_df[, word_index := paste0("word_", 1:.N), by=c("soa", "sbj_idx")]
+  # table_df[, word_color_index := paste0("word_color_", 1:.N), by=c("soa", "sbj_idx")]
+  # table_df[, word_conf_color_index := paste0("word_conf_color_", 1:.N), by=c("soa", "sbj_idx")]
+  # table_df[, color := select_color_by_hit_percentage(hit_perc), by=c("soa", "sbj_idx", "word_index")]
+  # table_df[, conf_color := select_color_by_confidence(confidence), by=c("soa", "sbj_idx", "word_index")]
+  # 
+  # wide_table_word_df <- spread(table_df[, c("soa", "sbj_idx", "word_index", "stem_word")], word_index, stem_word)
+  # wide_table_word_color_df <- spread(table_df[, c("soa", "sbj_idx", "word_color_index", "color")], word_color_index, color)
+  # wide_table_word_conf_color_df <- spread(table_df[, c("soa", "sbj_idx", "word_conf_color_index", "conf_color")], word_conf_color_index, conf_color)
+  # 
+  # soa_67 <- wide_table_word_df[soa=="67", c("sbj_idx", "word_1", "word_2", "word_3", "word_4", "word_5")]
+  # word_color_67 <- as.matrix(wide_table_word_color_df[soa=="67", c("word_color_1", "word_color_2", "word_color_3", "word_color_4", "word_color_5")])
+  # word_conf_color_67 <- as.matrix(wide_table_word_conf_color_df[soa=="67", c("word_conf_color_1", "word_conf_color_2", "word_conf_color_3", "word_conf_color_4", "word_conf_color_5")])
+  #                            
+  # soa_133 <- wide_table_word_df[soa=="133", c("sbj_idx", "word_1", "word_2", "word_3", "word_4", "word_5")]
+  # word_color_133 <- as.matrix(wide_table_word_color_df[soa=="133", c("word_color_1", "word_color_2", "word_color_3", "word_color_4", "word_color_5")])
+  # word_conf_color_133 <- as.matrix(wide_table_word_conf_color_df[soa=="133", c("word_conf_color_1", "word_conf_color_2", "word_conf_color_3", "word_conf_color_4", "word_conf_color_5")])
+  # 
+  # soa_267 <- wide_table_word_df[soa=="267", c("sbj_idx", "word_1", "word_2", "word_3", "word_4", "word_5")]
+  # word_color_267 <- as.matrix(wide_table_word_color_df[soa=="267", c("word_color_1", "word_color_2", "word_color_3", "word_color_4", "word_color_5")])
+  # word_conf_color_267 <- as.matrix(wide_table_word_conf_color_df[soa=="267", c("word_conf_color_1", "word_conf_color_2", "word_conf_color_3", "word_conf_color_4", "word_conf_color_5")])
+  # 
+  # # The following only simulate a plot with colorbar with the intention to extract the colorbar.
+  # p_lgd <- ggplot(data.table(col_a=1:5, col_b=factor(1:5)),aes(x=col_a, y=col_b, fill=col_b)) +
+  #   geom_bar(stat = 'identity') +
+  #   scale_fill_brewer(type = 'seq', palette = "PuRd", labels = c("0%", "(0%, 25%)", "[25%, 50%)", "[50%, 75%)", "[75%, 100%]"), direction=1, name="Hit Rate")
+  # 
+  # lgd <- get_legend(p_lgd)
+  # 
+  # # New theme paramters
+  # theme_67 <- ttheme_minimal(core=list(bg_params = list(fill = word_color_67), col=NA)) #fg_params=list(fontface=3)),
+  # theme_133 <- ttheme_minimal(core=list(bg_params = list(fill = word_color_133), col=NA)) #fg_params=list(fontface=3)),
+  # theme_267 <- ttheme_minimal(core=list(bg_params = list(fill = word_color_267), col=NA)) #fg_params=list(fontface=3)),
+  # 
+  # g <- grid.arrange(
+  #   tableGrob(soa_67[, c("word_1", "word_2", "word_3", "word_4", "word_5")], theme=theme_67, cols = NULL),
+  #   tableGrob(soa_133[, c("word_1", "word_2", "word_3", "word_4", "word_5")], theme=theme_133, cols = NULL, rows = NULL),
+  #   tableGrob(soa_267[, c("word_1", "word_2", "word_3", "word_4", "word_5")], theme=theme_267, cols = NULL, rows = NULL),
+  #   grid.arrange(
+  #     ggplotGrob(ggplot() + annotation_custom(rasterGrob(img, interpolate = FALSE))),
+  #     lgd, 
+  #     ncol = 1, heights=c(0.5, 0.5), padding=0),
+  #   nrow = 1, widths=c(2.8,2.8,2.5,0.8), padding=0
+  # );  
+  # 
+  # h <- 8
+  # ar <- 1.8
+  # ggsave(g, height=h, width= h*ar, filename = paste0("img_", target_img_id, "_sample_words_hit_perc.png"))
+
+  #all_conf_threshold
+```
+
+```{r, include=FALSE, echo=FALSE, message=FALSE}
+
+# create_word_cell_spec <- function(word_col, word_color_col, word_conf_color_col) {
+#   return (cell_spec(x = word_col, 
+#                              format = "html", 
+#                              color = "black", 
+#                             bold = F,
+#                              extra_css = (paste(
+#                                paste0('background-image: linear-gradient(to right, ', word_conf_color_col, ' 50%, ', word_color_col, ' 51%)'),# word_color_col), 
+#                                'display: inline-block', 
+#                                'padding: 1px 0 1px 0',
+#                                'border-bottom: 0',
+#                                'margin: 0px',
+#                                'width: 90px',
+#                                'font-famil: arial',
+#                                'font-weight: normal',
+#                               sep=";"))))
+# }
+# 
+# plot_word_confidence_by_soa <- function(df, soa, word_color_df, word_conf_color_df, add_index=FALSE) {
+#   options(knitr.table.format = "html")
+# 
+#   if (add_index) {
+#     df <- df %>%
+#     mutate(
+#       sbj_idx = cell_spec(x = sbj_idx, format="html", color="black", bold=F),
+#       word_1 = create_word_cell_spec(word_1, word_color_df[, 1], word_conf_color_df[, 1]), 
+#       word_2 = create_word_cell_spec(word_2, word_color_df[, 2], word_conf_color_df[, 2]), 
+#       word_3 = create_word_cell_spec(word_3, word_color_df[, 3], word_conf_color_df[, 3]), 
+#       word_4 = create_word_cell_spec(word_4, word_color_df[, 4], word_conf_color_df[, 4]), 
+#       word_5 = create_word_cell_spec(word_5, word_color_df[, 5], word_conf_color_df[, 5]), 
+#       sep=" ")
+#   } else {
+#     df <- df[, sbj_idx := NULL] %>%
+#     mutate(
+#       word_1 = create_word_cell_spec(word_1, word_color_df[, 1], word_conf_color_df[, 1]), 
+#       word_2 = create_word_cell_spec(word_2, word_color_df[, 2], word_conf_color_df[, 2]), 
+#       word_3 = create_word_cell_spec(word_3, word_color_df[, 3], word_conf_color_df[, 3]), 
+#       word_4 = create_word_cell_spec(word_4, word_color_df[, 4], word_conf_color_df[, 4]), 
+#       word_5 = create_word_cell_spec(word_5, word_color_df[, 5], word_conf_color_df[, 5]), 
+#       sep=" ")
+#   }
+#   k <- df %>%
+#     kable(escape=F, col.names = NULL, align = 'c') %>%
+#     kableExtra::row_spec(1:11, extra_css = "border: 0; padding-bottom: 1px; padding-left: 0;") %>%
+#     kable_styling(bootstrap_options = "condensed", full_width = F, font_size = 16) %>%
+#     as_image(file = paste0('img_', target_img_id, '_words_conf_', soa, '.png'))
+#   return(k)
+# }
+# 
+# plot_word_confidence_by_soa(soa_67[, c("sbj_idx", "word_1", "word_2", "word_3", "word_4", "word_5")], "67", word_color_67, word_conf_color_67, TRUE)
+# 
+# plot_word_confidence_by_soa(soa_133[, c("sbj_idx", "word_1", "word_2", "word_3", "word_4", "word_5")], "133", word_color_133, word_conf_color_133, FALSE)
+# 
+# plot_word_confidence_by_soa(soa_267[, c("sbj_idx", "word_1", "word_2", "word_3", "word_4", "word_5")], "267", word_color_267, word_conf_color_267, FALSE)
+
+```
+
+```{r }
+  # ------------------------
+  # Draw table (Confidence)
+  
+  # We still order by hit_percentage but get the colour by confidence.
+  table_df <- all_agg_data[order(soa, sbj_idx, hit_perc)][, c("soa", "subject", "sbj_idx", "stem_word", "confidence", "hit_perc")]
+  
+  table_df[, word_index := paste0("word_", 1:.N), by=c("soa", "sbj_idx")]
+  table_df[, word_color_index := paste0("word_color_", 1:.N), by=c("soa", "sbj_idx")]
+  table_df[, word_conf_color_index := paste0("word_conf_color_", 1:.N), by=c("soa", "sbj_idx")]
+  table_df[, color := select_color_by_hit_percentage(hit_perc), by=c("soa", "sbj_idx", "word_index")]
+  table_df[, conf_color := select_color_by_confidence(confidence), by=c("soa", "sbj_idx", "word_index")]
+  
+  wide_table_word_df <- spread(table_df[, c("soa", "sbj_idx", "word_index", "stem_word")], word_index, stem_word)
+  wide_table_word_color_df <- spread(table_df[, c("soa", "sbj_idx", "word_color_index", "color")], word_color_index, color)
+  wide_table_word_conf_color_df <- spread(table_df[, c("soa", "sbj_idx", "word_conf_color_index", "conf_color")], word_conf_color_index, conf_color)
+  
+  soa_67 <- wide_table_word_df[soa=="67", c("sbj_idx", "word_1", "word_2", "word_3", "word_4", "word_5")]
+  word_color_67 <- as.matrix(wide_table_word_color_df[soa=="67", c("word_color_1", "word_color_2", "word_color_3", "word_color_4", "word_color_5")])
+  word_conf_color_67 <- as.matrix(wide_table_word_conf_color_df[soa=="67", c("word_conf_color_1", "word_conf_color_2", "word_conf_color_3", "word_conf_color_4", "word_conf_color_5")])
+  
+  soa_133 <- wide_table_word_df[soa=="133", c("sbj_idx", "word_1", "word_2", "word_3", "word_4", "word_5")]
+  soa_133$sbj_idx = nrow(soa_67) +  soa_133$sbj_idx
+  word_color_133 <- as.matrix(wide_table_word_color_df[soa=="133", c("word_color_1", "word_color_2", "word_color_3", "word_color_4", "word_color_5")])
+  word_conf_color_133 <- as.matrix(wide_table_word_conf_color_df[soa=="133", c("word_conf_color_1", "word_conf_color_2", "word_conf_color_3", "word_conf_color_4", "word_conf_color_5")])
+  
+  soa_267 <- wide_table_word_df[soa=="267", c("sbj_idx", "word_1", "word_2", "word_3", "word_4", "word_5")]
+  soa_267$sbj_idx = nrow(soa_67) + nrow(soa_133) +  soa_267$sbj_idx
+  word_color_267 <- as.matrix(wide_table_word_color_df[soa=="267", c("word_color_1", "word_color_2", "word_color_3", "word_color_4", "word_color_5")])
+  word_conf_color_267 <- as.matrix(wide_table_word_conf_color_df[soa=="267", c("word_conf_color_1", "word_conf_color_2", "word_conf_color_3", "word_conf_color_4", "word_conf_color_5")])
+  
+  # The following only simulate a plot with colorbar with the intention to extract the colorbar.
+  p_lgd <- ggplot(data.table(col_a=1:5, col_b=factor(1:5)),aes(x=col_a, y=col_b, fill=col_b)) +
+    geom_bar(stat = 'identity') +
+    scale_fill_brewer(type = 'seq', palette = "PuRd", labels = c("0%", "(0%, 25%)", "[25%, 50%)", "[50%, 75%)", "[75%, 100%]"), direction=1, name="Hit Rate")
+  
+  p_conf_lgd <- ggplot(data.table(col_a=1:5, col_b=factor(1:5)),aes(x=col_a, y=col_b, fill=col_b)) +
+    geom_bar(stat = 'identity') + 
+    scale_fill_brewer(type = 'seq', palette = "GnBu", labels = c("Don't Know", "Guess", "Maybe", "Confident", "Very Confident"), direction=1, name="Confidence") +
+    theme(legend.box = "horizontal")
+  
+  lgd <- get_legend(p_lgd)
+  conf_lgd <- get_legend(p_conf_lgd)
+  
+  # New theme paramters
+  theme_67 <- ttheme_minimal(core=list(bg_params = list(fill = cbind('white', word_color_67)), col=NA)) #fg_params=list(fontface=3)),
+  theme_133 <- ttheme_minimal(core=list(bg_params = list(fill = cbind('white', word_color_133)), col=NA)) #fg_params=list(fontface=3)),
+  theme_267 <- ttheme_minimal(core=list(bg_params = list(fill = cbind('white', word_color_267)), col=NA)) #fg_params=list(fontface=3)),
+
+  theme_conf_67 <- ttheme_minimal(core=list(bg_params = list(fill = cbind('white', word_conf_color_67)), col=NA)) #fg_params=list(fontface=3)),
+  theme_conf_133 <- ttheme_minimal(core=list(bg_params = list(fill = cbind('white', word_conf_color_133)), col=NA)) #fg_params=list(fontface=3)),
+  theme_conf_267 <- ttheme_minimal(core=list(bg_params = list(fill = cbind('white', word_conf_color_267)), col=NA)) #fg_params=list(fontface=3)),
+
+  g <- grid.arrange(
+    grid.arrange(
+      ggplotGrob(ggplot()),
+      ggplotGrob(ggplot() + annotation_custom(rasterGrob(img, interpolate = FALSE))),
+      lgd,
+      conf_lgd,
+      nrow = 1, widths=c(0.1, 0.3, 0.1, 0.1, 0.4), padding = 0),
+    ggplotGrob(ggplot()),
+    grid.arrange(
+      tableGrob(soa_67[, c("sbj_idx", "word_1", "word_2", "word_3", "word_4", "word_5")], theme=theme_67, cols = NULL, rows = NULL),
+      tableGrob(soa_133[, c("sbj_idx", "word_1", "word_2", "word_3", "word_4", "word_5")], theme=theme_133, cols = NULL, rows = NULL),
+      tableGrob(soa_267[, c("sbj_idx", "word_1", "word_2", "word_3", "word_4", "word_5")], theme=theme_267, cols = NULL, rows = NULL),
+    nrow = 1, widths=c(1, 1, 1), padding = 0),
+    grid.arrange(
+      tableGrob(soa_67[, c("sbj_idx", "word_1", "word_2", "word_3", "word_4", "word_5")], theme=theme_conf_67, cols = NULL, rows = NULL),
+      tableGrob(soa_133[, c("sbj_idx", "word_1", "word_2", "word_3", "word_4", "word_5")], theme=theme_conf_133, cols = NULL, rows = NULL),
+      tableGrob(soa_267[, c("sbj_idx", "word_1", "word_2", "word_3", "word_4", "word_5")], theme=theme_conf_267, cols = NULL, rows = NULL),
+    nrow = 1, widths=c(1, 1, 1), padding = 0),
+    ncol = 1, heights=c(0.15, 0.05, 0.4, 0.4), padding=0
+  );  
+  
+  h <- 8
+  ar <- 2.1
+  ggsave(g, height=h, width= h*ar, filename = paste0("img_", target_img_id, "_sample_words.png"))
+#}
+
+```
+
+```{r }
+# Draw other words 
+
+# other_words=table_df[sbj_idx != 1, .(count = .N) , by=c('stem_word', 'subject')]
+# other_words=other_words[, .(count = .N) , by=c('stem_word')]
+# 
+# colormap <- brewer_pal(type = 'qualitative', palette = "Accent")
+# colormap_vals <- colormap(2)
+# g <- wordcloud2(other_words, size=1, minRotation = 0, maxRotation = 0, color=rep_len( c("#636363"), nrow(other_words)))
+
+```
+
+```{r }
+# custom_table = data.table(
+#   word=c("breeze", "shoreline", "wave", "ocean", "rock", 
+#          "plant", "mountain", "sky", "sea", "sun",
+#          "man", "beach", "sea", "stone", "sun"),
+#   hit_miss=c("miss", "miss", "hit (3)", "hit (4)", "hit (7)",
+#              "miss", "hit (1)", "hit (4)", "hit (13)", "hit (16)",
+#              "hit (1)", "hit(7)", "hit (13)", "hit (13)", "hit (16)"),
+#   hit_rate=c("0", "0", "3/30 = 0.1", "4/30 = 0.13", "7/30 = 0.23",
+#              "0", "1/30 = 0.03", "4/30 = 0.13", "13/30 = 0.43", "16/30 = 0.53",
+#              "1/30 = 0.03", "7/30 = 0.23", "13/30 = 0.43", "13/30 = 0.43", "16/30 = 0.53"),
+#   bg_color=c("#fbb4ae", "#fbb4ae", "#ccebc5", "#ccebc5", "#ccebc5",
+#              "#fbb4ae", "#ccebc5", "#ccebc5", "#ccebc5", "#ccebc5",
+#              "#ccebc5", "#ccebc5", "#ccebc5", "#ccebc5", "#ccebc5"
+#              ))
+# 
+# theme_67 <- ttheme_minimal(
+#   core=list(
+#     bg_params = list(fill = cbind(word_color_67[1], custom_table$bg_color, word_color_67[1])),
+#   col=NA))
+# 
+# g <- grid.arrange(tableGrob(custom_table[, c('word', 'hit_miss', 'hit_rate')], theme=theme_67, cols = c("", "", "Hit Rate"), rows = NULL))
+# 
+# h <- 10
+# ar <- 1.5
+# ggsave(g, height=h, width= h*ar, filename = paste0("img_", target_img_id, "_example.png"))
+
+```
+
+```{r }
+# 1951 - Obama
+
+# selected_image_ids <- get_batch_image_ids("/Volumes/Spaceship/projects/gist-generation/shinji_imagesets", 1, 1)
+# for (target_image_id in selected_image_ids[2]) {
+#   analyse_one_image_words_confidence(master_df, target_image_id)
+# }
+
+```
