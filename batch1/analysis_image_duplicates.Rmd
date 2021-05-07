@@ -1,0 +1,265 @@
+---
+title: "Analysis"
+subtitle: "MTurk Analysis - `r format(Sys.time(), '%d %B, %Y')`"
+geometry: left=2cm,right=2cm,top=2cm,bottom=2cm
+output:
+  pdf_document:
+    latex_engine: xelatex
+  html_document:
+    df_print: paged
+header-includes: \usepackage{xcolor}
+---
+
+```{r include=FALSE, echo=FALSE, message=FALSE}
+source('embed_import_libraries.R')
+source('embed_configuration.R')
+source('function-compute_kl.R')
+source('function-image_utilities.R')
+
+library("scales")
+library("grid")
+library("gridExtra")
+```
+
+```{r}
+## Data Summary
+
+load(file = "psy4100_master_data.RData")
+
+print(paste0("Total participants (includes Shinji's): ", total_subjects))
+print(paste0("Total participants (only MTurk): ", total_mturk_subjects))
+print(paste0("Total images (including 3 practice images):", length(included_img_ids)))
+
+# We ignore unlimited SOA (Alon's experiment)
+master_df <- master_raw_stem_df[soa != "Unlimited", ]
+
+# This is to replace the stem words with hyphen with the original.
+master_df[stem_word %like% "-,", stem_word := word ] 
+master_df[stem_word %like% ", -", stem_word := word ] 
+master_df[stem_word %like% "-, ", stem_word := word ] 
+
+# Also shift the confidence range.
+master_df$confidence <- master_df$confidence + 1
+```
+
+```{r }
+source('functions-type1auc_intersubjectivity.R')
+
+# Load the duplicate image ids.
+load('duplicate_similar_images.RData')
+```
+
+```{r, message=FALSE}
+# Build a giant list for all the image word data table based on image ids.
+all_image_ids <- unique(master_df$img_id)
+all_image_dfs <- NULL
+all_image_dfs <- vector(mode = "list", length = length(all_image_ids))
+for (img_index in 1:length(all_image_ids)) {
+  img_id <- all_image_ids[img_index]
+  img_df <- construct_subject_image_df(master_df, img_id, target_soa = 0)
+  all_image_dfs[[img_index]] <- img_df
+}
+```
+
+```{r }
+# Calculate probability of common words
+
+intersect_a_b <- matrix(nrow = length(all_image_ids), ncol = length(all_image_ids))
+
+for (i in 1:length(all_image_ids)) {
+  img_id1 <- all_image_ids[i]
+  
+  for (j in 1:length(all_image_ids)) {
+    img_id2 <- all_image_ids[j]
+    
+    if (i > j) {
+      next
+    }
+    
+    if (img_id1 ==  img_id2) {
+      intersect_a_b[i, j] = 1
+    } else {
+      
+      img1_df <- all_image_dfs[[i]]
+      img2_df <- all_image_dfs[[j]]
+      
+      img1_words <- unique(img1_df$stem_word)
+      img2_words <- unique(img2_df$stem_word)
+      
+      common_words <- intersect(img1_words, img2_words)
+      prob <- length(common_words)/(length(img1_words) + length(img2_words))
+      intersect_a_b[i, j] <- prob
+      intersect_a_b[j, i] <- prob
+    }
+    
+  }
+}
+
+```
+
+```{r }
+load("image_word_intersection.RData")
+
+options(stringsAsFactors=FALSE)
+intersect_df <- melt(as.data.table(intersect_a_b, keep.rownames = TRUE))
+colnames(intersect_df) <- c("img1", "img2", "prob")
+intersect_df$img1 <- as.numeric(intersect_df$img1)
+intersect_df$img2 <- as.numeric(levels(intersect_df$img2))[intersect_df$img2]
+
+
+plot_df <- intersect_df[img1 < img2, ]
+
+dup_plot_df <- data.table()
+for (i in 1:nrow(duplicate_img_ids)) {
+  a_row = unlist(duplicate_img_ids[i]$duplicate_set)
+  
+  comb <- combn(a_row, 2)
+  
+  for (j in 1:ncol(comb)) {
+    dup_plot_df <- rbind(dup_plot_df, plot_df[img1 == comb[1, j] & img2 == comb[2, j], ])
+  }
+}
+
+filter <- function(x) {
+  any(x[1] == dup_plot_df$img1 & x[2] == dup_plot_df$img2)
+}
+
+non_dup_plot_df <- plot_df
+indices <- which(apply(plot_df, 1, filter))
+non_dup_plot_df <- non_dup_plot_df[!1:NROW(non_dup_plot_df) %in% indices, ]
+non_dup_plot_df$img <- paste0(non_dup_plot_df$img1, '-', non_dup_plot_df$img2)
+non_dup_plot_df <- non_dup_plot_df[order(prob)]
+non_dup_plot_df$img <- factor(non_dup_plot_df$img, levels=non_dup_plot_df[order(-prob)]$img)
+
+g <- ggplot(non_dup_plot_df, aes(x=img, y=prob)) +
+  geom_histogram(stat = 'identity') + 
+  ggtitle("Non-duplicate Image Pairs") +
+  ylab("Probability of common words") +
+  xlab("Image-pairs") +
+  theme(legend.position="none", axis.text.x = element_blank(),
+       axis.ticks.x = element_blank())
+g <- g +  geom_hline(yintercept=mean(non_dup_plot_df$prob), color="red")
+
+dup_plot_df$img <- paste0(dup_plot_df$img1, '-', dup_plot_df$img2)
+g1 <- ggplot(dup_plot_df, aes(x=img, y=prob)) +
+  geom_histogram(stat = 'identity') + 
+  ggtitle("Duplicate Image Pairs") +
+  geom_hline(yintercept=mean(dup_plot_df$prob), color="red") +
+  ylab("Probability of common words") +
+  xlab("Image-pairs") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+gall <- grid.arrange(
+  ggplotGrob(g),
+  ggplotGrob(g1),
+  nrow = 2, padding = 0)
+  
+h <- 8
+ar <- 2.1
+
+ggsave(gall, height=h, width= h*ar, filename = paste0("intersection_words", ".png")) 
+
+# Draw cumulative probabilities
+
+comb_dup_plot_df = rbind(non_dup_plot_df[,.(img1, img2, prob, type = 'ND')], dup_plot_df[, .(img1, img2, prob, type = 'D')])
+
+cum_prob_similar_not_similar_image <- ggplot(comb_dup_plot_df, aes(x = prob, group = type, colour = type)) +
+  stat_ecdf(geom = "step", size = 2) + 
+  xlab("Probability of Common Words Between Two Images") +
+  ylab("Cumulative Sum") +
+  scale_x_continuous(expand = c(0, 0)) +
+  scale_y_continuous(expand = c(0, 0)) +
+  scale_color_discrete(labels = c("Similar", "Non-Similar")) + 
+  theme(text = element_text(size = 21), axis.text = element_text(size = 21), legend.title = element_blank())
+
+h <- 8
+ar <- 2
+
+ggsave(cum_prob_similar_not_similar_image, height=h, width= h*ar, filename = paste0("cum_prob_similar_not_similar_image", ".png")) 
+
+
+```
+
+```{r, message=FALSE}
+
+## This part is using JSD to calculate IA differences
+
+library(rlist)
+js_df <- data.table()
+
+for (i in 1:nrow(duplicate_img_ids)) {
+  duplicate_set <- unlist(duplicate_img_ids[i, ]$duplicate_set)
+  
+  # Collect dfs for all duplicates
+  dup_dfs <- list()
+
+  for (dup_img_id in duplicate_set) {
+    df <- all_image_dfs[[which(all_image_ids == dup_img_id)]]
+    agg_df <- df[,.(count = sum(frequency)), by=c("stem_word")]
+    agg_df$probability = agg_df$count/sum(agg_df$count)
+    agg_df$count = NULL
+    
+    dup_dfs <- list.append(dup_dfs, agg_df)
+  }
+  
+  # Merge all dfs (to get word distributions)
+  merge_df <- data.table()
+  for (df_idx in 1:length(dup_dfs)) {
+    if (df_idx == 1) {
+      merge_df <- dup_dfs[df_idx]
+    } else {
+      merge_df <- merge(merge_df, dup_dfs[df_idx], all=TRUE, by=c("stem_word"))
+    }
+  }
+  
+  colnames(merge_df) = c("stem_word", duplicate_set)
+  merge_df <- melt(merge_df, id.vars="stem_word", variable.name = "img_id", value.name = "probability")
+  merge_df[is.na(merge_df)] <- 0
+  
+  g <- ggplot(merge_df, aes(x=stem_word, y=probability, color=img_id, group=img_id)) + 
+    #geom_histogram(stat="identity")  + 
+    #geom_point() + 
+    geom_line() +
+    theme_bw() +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+  
+  i <- sapply(merge_df, is.factor)
+  merge_df[i] <- lapply(merge_df[i], as.character)
+  merge_df <- data.table(merge_df) 
+  
+  all_combinations <- combn(unique(merge_df$img_id), 2)
+  js_str <- c()
+  
+  for (comb_idx in 1:ncol(all_combinations)) {
+    img_ids_compare <- all_combinations[, comb_idx]
+    prob_concat <- rbind(merge_df[img_id == as.character(img_ids_compare[1]), ]$probability,  
+                         merge_df[img_id == as.character(img_ids_compare[2]), ]$probability)
+    js_dist_value = compute_divergence(prob_concat, "JS-DISTANCE")
+    
+    js_str <- paste0(js_str, "\n", sprintf("Distance between img %s and img %s is: %.4f", img_ids_compare[1], img_ids_compare[2], compute_divergence(prob_concat, "JS-DISTANCE")))
+    js_df <- rbind(js_df, data.table(img_1 = img_ids_compare[1], img_2 = img_ids_compare[2], js_distance = js_dist_value))
+  }
+  
+  gimp <- ggplot(data.table(x=0:3, y=0:3), aes(x=x, y=y)) + xlim(0, 3) + ylim(0, 3) + theme(axis.line=element_blank(),axis.text.x=element_blank(),
+          axis.text.y=element_blank(),axis.ticks = element_blank(),axis.title.x=element_blank(),axis.title.y=element_blank())
+  posx = 0
+  posy = 0
+  for (dup_img_id in duplicate_set) {
+    gimp <- gimp + annotation_raster(image_scale(get_image_by_id(nishimoto_images_folder, dup_img_id), "200"), ymin = posy, ymax=posy + 3, xmin=posx + 0.01, xmax=posx + 0.5)
+    posx = posx + 0.5
+  }
+  
+  gtext <- ggplot(data.table(x=0:1, y=0:1), aes(x=x, y=y)) + xlim(0, 1) + ylim(0, 1) + theme(axis.line=element_blank(),axis.text.x=element_blank(),
+          axis.text.y=element_blank(),axis.ticks = element_blank(),axis.title.x=element_blank(),axis.title.y=element_blank()) + ggplot2::annotate("text", x=0.5, y=0.5, label=js_str)
+      
+  g1 <- grid.arrange(
+        grid.arrange(
+      ggplotGrob(gimp), ggplotGrob(gtext), nrow = 1, widths=c(0.5, 0.5)
+      ), ggplotGrob(g),
+      nrow = 2, ncol=1, heights=c(0.2, 0.8), padding = 0)
+
+  h <- 8
+  ar <- 2.1
+  ggsave(g1, height=h, width= h*ar, filename = paste0("img_duplicates_set_", duplicate_set[1], ".png")) 
+}
+```
