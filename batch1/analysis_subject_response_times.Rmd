@@ -1,0 +1,358 @@
+---
+title: "Analysis"
+subtitle: "MTurk Analysis - `r format(Sys.time(), '%d %B, %Y')`"
+geometry: left=2cm,right=2cm,top=2cm,bottom=2cm
+output:
+  pdf_document:
+    latex_engine: xelatex
+  html_document:
+    df_print: paged
+header-includes: \usepackage{xcolor}
+---
+
+```{r include=FALSE, echo=FALSE, message=FALSE}
+source('embed_import_libraries.R')
+source('embed_configuration.R')
+source('function-compute_kl.R')
+source('function-image_utilities.R')
+source('function-plot_utilities.R')
+
+library("scales")
+library("grid")
+library("gridExtra")
+```
+
+```{r}
+## Set theme
+theme_set(get_custom_theme())
+
+## Data Summary
+
+load(file = "psy4100_master_data.RData")
+load(file = "all_sbj_img_soa_latency.RData")
+
+source('function-image_utilities.R')
+
+# Merge the latency to master_raw_df and master_stem_raw_df
+sbj_img_soa_latency_df$img_id <- get_image_id_by_filename(sbj_img_soa_latency_df$img)
+
+# We ignore unlimited SOA (Alon's experiment)
+master_df <- master_raw_stem_df[soa != "Unlimited", ]
+
+# This is to replace the stem words with hyphen with the original.
+master_df[stem_word %like% "-,", stem_word := word ] 
+master_df[stem_word %like% ", -", stem_word := word ] 
+master_df[stem_word %like% "-, ", stem_word := word ] 
+
+# subject_img_latency_df <- merge(unique(master_df[, .(subject, img_id)]), unique(full_raw_df[, .(response_time = mean(latency)), by = c("subject", "img_id")]), by = c("subject", "img_id"), all.x=TRUE, )
+# subject_img_latency_df$V1 <- NULL
+
+master_df <- merge(master_df, sbj_img_soa_latency_df[, .(subject, img_id, latency)], all.x = TRUE, by = c("subject", "img_id"))
+
+# Also shift the confidence range.
+master_df$confidence <- master_df$confidence + 1
+master_df$latency <- master_df$latency/1000
+master_df[subject == "A1XLQVD1R2V8CL" & img_id == 56]$trialnum = 42 # This matters only for response time analysis
+```
+
+
+```{r }
+
+# Plot RT versus IA
+
+load('all_img_type1auc.RData')
+
+# Truncate master_df to contains only up to 10 participants per SOA.
+unique_img_soa <- unique(master_df[!img_id %in% c(3, 9, 14), .(img_id, soa)])
+
+trim_master_df <- data.table()
+sbj_idx_id_df <- data.table()
+for (rowidx in 1:nrow(unique_img_soa)) {
+  a_row <- unique_img_soa[rowidx, ]
+  
+  # Only get the first 10 to match with IA dataset
+  all_subjects <- unique(master_df[img_id == a_row$img_id & soa == a_row$soa, ]$subject)
+  uniq_10_sbj_ids <- head(all_subjects, 10)
+  first_10_df <- master_df[img_id == a_row$img_id & soa == a_row$soa & subject %in% uniq_10_sbj_ids, ]
+  trim_master_df <- rbind(trim_master_df, first_10_df)
+  
+  uniq_sbj_id <- unique(first_10_df$subject)
+  sbj_idx_id_df <- rbind(sbj_idx_id_df, data.table(img_id = rep(a_row$img_id, 10), soa = rep(a_row$soa, 10), subject = uniq_10_sbj_ids, subject_idx = (1:10)))
+}
+
+sbj_img_latency_conf_df <- master_df[!img_id %in% c(3, 9, 14), .(m_latency = mean(latency), m_loglatency = mean(log(latency)), m_confidence = mean(confidence), std_confidence = sd(confidence)), by=c("subject", "img_id", "soa")]
+
+# The following will also exclude the practice images because sbj_idx_id_df does not have the practice image ids
+sbj_img_latency_conf_df <- merge(sbj_img_latency_conf_df, sbj_idx_id_df, by=c("subject", "img_id", "soa"))
+all_img_type1auc_subject <- merge(all_img_type1auc, sbj_idx_id_df, by.x=c("sbj_idx", "img_id", "soa"), by.y=c("subject_idx", "img_id", "soa"))
+
+mean_subject_img_ia <- all_img_type1auc_subject[!img_id %in% c(3, 9, 14), .(mean_word_auc = mean(type1auc), mean_weighted_word_auc = mean(type1auc_weighted)), by=c("subject", "img_id", "soa")]
+
+# sbj_img_ia_latency_df contains response time for each subject under each image.
+sbj_img_ia_latency_conf_df <- merge(sbj_img_latency_conf_df, mean_subject_img_ia, by.x = c("subject", "img_id", "soa"), by.y  =c("subject", "img_id", "soa"))
+
+```
+
+```{r, analysis}
+## Start of analysis
+
+### Single Image (mean AUC per subject)
+
+### Eiffel tower
+image_id = 2277
+image_df <- sbj_img_ia_latency_conf_df[img_id == image_id, ]
+
+g <- ggplot(image_df, aes(x=m_loglatency, y=mean_weighted_word_auc)) + 
+  geom_point(size = 3) + 
+  geom_vline(xintercept = mean(image_df$m_loglatency), linetype = "dashed") +
+  geom_vline(xintercept = mean(image_df$m_loglatency) + sd(image_df$m_loglatency) * 1.75, linetype = "dotted") +
+  geom_vline(xintercept = mean(image_df$m_loglatency) - sd(image_df$m_loglatency) * 1.75, linetype = "dotted") +
+  stat_smooth(method = "lm") +
+  theme_bw() +
+  xlab("Log Response Time (seconds)") +
+  ylab("Mean Word AUC (subject)") +
+  ggtitle(paste0("Image ", image_id)) +
+  theme(text = element_text(size = 18))
+
+h <- 7
+ar <- 1.5
+ggsave(g, height=h, width= h*ar, filename = paste0("image-", image_id, "-log-response-time.png"))
+
+
+g <- ggplot(image_df, aes(x=m_loglatency, y=mean_weighted_word_auc)) + 
+  geom_point(size = 3) + 
+  geom_vline(data=image_df[soa == 67], aes(xintercept = mean(image_df[soa == 67]$m_loglatency), group = soa), linetype = "dashed") +
+  geom_vline(data=image_df[soa == 133], aes(xintercept = mean(image_df[soa == 133]$m_loglatency), group = soa), linetype = "dashed") +
+  geom_vline(data=image_df[soa == 267], aes(xintercept = mean(image_df[soa == 267]$m_loglatency), group = soa), linetype = "dashed") +
+  stat_smooth(method = "lm") +
+  facet_grid(.~soa) +
+  theme_bw() +
+  xlab("Log Response Time (seconds)") +
+  ylab("Mean Word AUC (subject)") +
+  ggtitle(paste0("Image ", image_id)) +
+  theme(text = element_text(size = 18))
+
+h <- 7
+ar <- 1.5
+ggsave(g, height=h, width= h*ar, filename = paste0("image-", image_id, "-log-response-time-split-soa.png"))
+
+
+```
+
+
+```{r }
+### All Images (mean AUC per subject vs mean(log(RT)))
+
+image_df <- sbj_img_ia_latency_conf_df[, .(mean_img_ia = mean(mean_weighted_word_auc), mean_log_rt = mean(m_loglatency)), by = c("subject")]
+
+g <- ggplot(image_df, aes(x=mean_log_rt, y=mean_img_ia)) + 
+  geom_point(size = 1) + 
+  geom_vline(xintercept = mean(image_df$mean_log_rt), linetype = "dashed") +
+  geom_vline(xintercept = mean(image_df$mean_log_rt) + sd(image_df$mean_log_rt) * 1.75, linetype = "dotted") +
+  geom_vline(xintercept = mean(image_df$mean_log_rt) - sd(image_df$mean_log_rt) * 1.75, linetype = "dotted") +
+  stat_smooth(method = "lm") +
+  theme_bw() +
+  xlab("Log Response Time (seconds)") +
+  ylab("Weighted Mean Images AUC") +
+  theme(text = element_text(size = 18))
+
+image_df <- sbj_img_ia_latency_conf_df[, .(mean_img_ia = mean(mean_weighted_word_auc), mean_log_rt = mean(m_loglatency)), by = c("subject", "soa")]
+g <- ggplot(image_df, aes(x=mean_log_rt, y=mean_img_ia)) + 
+  geom_point(size = 1) + 
+  geom_vline(data=image_df[soa == 67], aes(xintercept = mean(image_df[soa == 67]$mean_log_rt), group = soa), linetype = "dashed") +
+  geom_vline(data=image_df[soa == 133], aes(xintercept = mean(image_df[soa == 133]$mean_log_rt), group = soa), linetype = "dashed") +
+  geom_vline(data=image_df[soa == 267], aes(xintercept = mean(image_df[soa == 267]$mean_log_rt), group = soa), linetype = "dashed") +
+  stat_smooth(method = "lm") +
+  facet_grid(.~soa) +
+  theme_bw() +
+  xlab("Log Response Time (seconds)") +
+  ylab("Weighted Mean Images AUC") +
+  theme(text = element_text(size = 18))
+```
+
+```{r }
+### Single Image (mean confidence and sd confidence per subject)
+
+### Eiffel tower
+image_id = 50
+image_df <- sbj_img_ia_latency_conf_df[img_id == image_id, ]
+
+g <- ggplot(image_df, aes(x=m_confidence, y=m_loglatency)) + 
+  geom_point(size = 3) + 
+  stat_smooth(method = "lm") +
+  theme_bw() +
+  xlab("Mean Confidence Ratings") +
+  ylab("Log Response Time (seconds)") +
+  ggtitle(paste0("Image ", image_id)) +
+  theme(text = element_text(size = 18))
+
+h <- 7
+ar <- 1.5
+ggsave(g, height=h, width= h*ar, filename = paste0("image-", image_id, "-log-response-time.png"))
+
+
+g <- ggplot(image_df, aes(x=m_confidence, y=m_loglatency)) + 
+  geom_point(size = 3) + 
+  stat_smooth(method = "lm") +
+  facet_grid(.~soa) +
+  theme_bw() +
+  xlab("Mean Confidence Ratings") +
+  ylab("Log Response Time (seconds)") +
+  ggtitle(paste0("Image ", image_id)) +
+  theme(text = element_text(size = 18))
+
+h <- 7
+ar <- 1.5
+ggsave(g, height=h, width= h*ar, filename = paste0("image-", image_id, "-log-response-time-split-soa.png"))
+
+```
+
+```{r }
+### All Images (mean confidence and sd confidence per subject)
+
+image_df <- sbj_img_ia_latency_conf_df[, .(mean_confidence = mean(m_confidence), mean_log_rt = mean(m_loglatency)), by = c("subject")]
+
+g <- ggplot(image_df, aes(x=mean_confidence, y=mean_log_rt)) + 
+  geom_point(size = 3) + 
+  stat_smooth(method = "lm") +
+  theme_bw() +
+  xlab("Mean Image Confidence Ratings") +
+  ylab("Mean Log Response Time (seconds)") +
+  theme(text = element_text(size = 18))
+
+h <- 7
+ar <- 1.5
+ggsave(g, height=h, width= h*ar, filename = paste0("image-", image_id, "-log-response-time.png"))
+
+image_df <- sbj_img_ia_latency_conf_df[, .(mean_confidence = mean(m_confidence), mean_log_rt = mean(m_loglatency)), by = c("subject", "soa")]
+g <- ggplot(image_df, aes(x=mean_confidence, y=mean_log_rt)) + 
+  geom_point(size = 3) + 
+  stat_smooth(method = "lm") +
+  facet_grid(.~soa) +
+  theme_bw() +
+  xlab("Mean Confidence Ratings") +
+  ylab("Log Response Time (seconds)") +
+  facet_grid(.~soa) +
+  theme(text = element_text(size = 18))
+
+h <- 7
+ar <- 1.5
+ggsave(g, height=h, width= h*ar, filename = paste0("image-", image_id, "-log-response-time-split-soa.png"))
+
+
+
+```
+
+```{r }
+### Single Image (trial by trial)
+
+### Eiffel tower
+# image_id = 2277
+# image_df <- master_df[!img_id %in% c(3, 9, 14) & subject %in% sbj_img_ia_latency_conf_df[img_id == image_id, ]$subject, ]
+# image_df$trialnum <- image_df$trialnum/2
+# 
+# image_subject_trial <- unique(image_df[, .(latency), by = c("img_id", "subject", "trialnum")])
+# 
+# g <- ggplot(image_subject_trial, aes(x=trialnum, y = latency, colour = subject)) +
+#   geom_point(size = 3) + 
+#   stat_summary(fun.y = "mean", colour = "red", geom="line") + 
+#   xlab("Trial Number") +
+#   ylab("Response Time") +
+#   ggtitle(paste0("Response Time for Image ", image_id, " (N=", length(unique(image_subject_trial$subject)), ")")) +
+#   theme(legend.position = "none")
+# 
+# h <- 7
+# ar <- 1.5
+# ggsave(g, height=h, width= h*ar, filename = paste0("image-", image_id, "-trial-response-time.png"))
+
+```
+
+```{r }
+### Single Image - Individual
+
+image_df <- master_df[!img_id %in% c(3, 9, 14) & subject %in% c("A39ONIMT6RT6S2", "A23FMTVKQEYCMW", "A2EED3HLTA96CP", "A1NDM9R54FJMPW", "A1ZI4VU6650Q8B")]
+image_df$trialnum <- image_df$trialnum/2
+
+image_subject_trial <- unique(image_df[, .(latency), by = c("img_id", "subject", "trialnum")])[order(trialnum)]
+
+g <- ggplot(image_subject_trial, aes(x=trialnum, y = log(latency), colour = subject)) +
+  geom_line(size = 3) + 
+  xlab("Trial Number") +
+  ylab("log(Response Time) (seconds)") +
+  ggtitle(paste0("Log Response Time By Subject"))
+
+h <- 7
+ar <- 1.5
+ggsave(g, height=h, width= h*ar, filename = paste0("image-", image_id, "-subject-trial-log-response-time.png"))
+
+
+### All trials
+
+image_df <- master_df[!img_id %in% c(3, 9, 14) & subject %in% sbj_img_ia_latency_conf_df$subject]
+image_df$trialnum <- image_df$trialnum/2
+
+image_subject_trial <- unique(image_df[, .(latency), by = c("img_id", "subject", "trialnum")])[order(trialnum)]
+
+print(mean(log(image_subject_trial$latency)))
+print(sd(log(image_subject_trial$latency)))
+
+g <- ggplot(image_subject_trial, aes(x=trialnum, y = log(latency))) +
+  geom_point() +
+  stat_summary(fun.y = "mean", aes(y = log(latency)), colour="red", geom="line") +
+  xlab("Trial Number") +
+  ylab("Log Response Time (seconds)") +
+  ggtitle(paste0("Log Response Time By Subject (N = ", length(unique(image_subject_trial$subject)), ")"))
+
+all_trial_response_time_plot <- ggplot(image_subject_trial, aes(x=latency)) +
+  geom_histogram(bins = 100) +
+  xlab(expression("Response Time for a Single Trial (seconds)")) +
+  ylab("Count") +
+  scale_x_log10(breaks = trans_breaks("log10", function(x) 10^x),
+              labels = trans_format("log10", math_format(10^.x))) +
+  annotation_logticks(sides="b") +
+  geom_vline(xintercept = mean(image_subject_trial$latency), linetype = "dashed", color="red") +
+  scale_y_continuous(expand = c(0, 0))
+
+save_plot_to_file(all_trial_response_time_plot, filenm = paste0("all_trials_response_time", ".png"), h = A4_HEIGHT/2, w = A4_WIDTH/2)
+
+## zoom in
+
+g_zoom <- ggplot(image_subject_trial, aes(x=trialnum, y = latency)) +
+  geom_point() +
+  stat_summary(fun.y = "median", aes(y = latency), colour="red", geom="line") +
+  xlab("Trial Number") +
+  ylab("Response Time (seconds)") +
+  coord_cartesian(ylim=c(0, 300))
+  ggtitle(paste0("Response Time By Subject (N = ", length(unique(image_subject_trial$subject)), ")"))
+
+
+h <- 7
+ar <- 1.5
+ggsave(g, height=h, width= h*ar, filename = paste0("image-", image_id, "-all-subject-trial-response-time.png"))
+
+```
+
+```{r }
+
+# Collapse subject-image-soa
+sbj_response_time_auc_df <- sbj_img_ia_latency_conf_df[, .(median_response_time = median(m_latency), mean_response_time = mean(m_latency), mean_auc = mean(mean_word_auc), mean_weighted_auc = mean(mean_weighted_word_auc), mean_conf = mean(m_confidence), sd_conf = sd(.SD$m_confidence)), by=c("subject_idx", "subject")]
+
+ggplot(sbj_response_time_auc_df, aes(x=median_response_time, y=mean_auc)) + 
+  geom_point() +
+  stat_smooth(method = "lm") +  
+  scale_x_continuous(breaks = c(0, 30, 60, 90, 120, 150, 180)) +
+  xlab("Median response time per participant") +
+  ylab("Mean AUC per participant") +
+  ggtitle(paste0("Number of participants=", length(unique(sbj_response_time_auc_df$subject)))) +
+  theme_bw()
+
+ggplot(sbj_response_time_auc_df, aes(x=median_response_time, y=mean_weighted_auc)) + 
+  geom_point() +
+  stat_smooth(method = "lm") +  
+  scale_x_continuous(breaks = c(0, 30, 60, 90, 120, 150, 180)) +
+  xlab("Median response time per participant") +
+  ylab("Mean weighted AUC per participant") +
+  ggtitle(paste0("Number of participants=", length(unique(sbj_response_time_auc_df$subject)))) +
+  theme_bw()
+
+```
