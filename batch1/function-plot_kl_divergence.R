@@ -141,7 +141,7 @@ plot_kl_divergence <- function(in_dt_raw, title, suffix = "", batch_no = "") {
     #geom_point(position = position_jitter(width = 0.1)) +
     labs(y=expression(paste("KL Divergence (", log[2], ")"))) +
     xlab("Approximate SOA") + 
-    ggtitle(paste0(title)) +
+    #ggtitle(paste0(title)) +
     scale_x_discrete(name="SOA Pair", labels=group_label) +
     theme(axis.text.x = element_text(angle = 90), legend.title = element_blank(), legend.position = "none")
   print(p)
@@ -165,7 +165,7 @@ plot_kl_divergence <- function(in_dt_raw, title, suffix = "", batch_no = "") {
     stat_summary(fun.y = median, geom="point", size=2, color="red") +
     labs(y=expression(paste("KL Divergence (", log[2], ")"))) +
     xlab("Approximate SOA") + 
-    ggtitle(title) +
+    #ggtitle(title) +
     scale_fill_brewer(palette="Spectral") +
     theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
     # geom_text(data = anno, aes(x = xstar,  y = ystar, label = lab)) +
@@ -202,7 +202,7 @@ plot_kl_divergence <- function(in_dt_raw, title, suffix = "", batch_no = "") {
     geom_boxplot(width=0.3, position = dodge, show.legend = FALSE, aes(col = img_id)) +
     labs(y=expression(paste("KL Divergence (", log[2], ")"))) +
     xlab("Approximate Presentation Time") + 
-    ggtitle(paste0("Images = ", length(unique(in_dt_no_unlimited$img_id)))) +
+    #ggtitle(paste0("Images = ", length(unique(in_dt_no_unlimited$img_id)))) +
     scale_fill_brewer(palette="Spectral") +
     #theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
     # geom_text(data = anno, aes(x = xstar,  y = ystar, label = lab)) +
@@ -238,12 +238,12 @@ plot_kl_divergence <- function(in_dt_raw, title, suffix = "", batch_no = "") {
     geom_boxplot(width=0.3, position = dodge, show.legend = FALSE, aes(col = img_id)) +
     # stat_summary(fun.y = mean, geom="point", shape=23, size=2) +
     # stat_summary(fun.y = median, geom="point", size=2, color="red") +
-    labs(y="Jensen-Shannon Distance", x="Presentation Duration Pair") +
+    labs(x="Presentation Duration Pair", y="Jensen-Shannon Distance") +
     scale_x_discrete(labels = c("67ms & 133ms", "67ms & 267ms", "133ms & 267ms")) +
     #coord_cartesian(ylim=c(0.7, 0.8)) +
-    ggtitle(paste0("Total Number of Images = ", length(unique(in_dt_no_unlimited$img_id)))) +
+    #ggtitle(paste0("Total Number of Images = ", length(unique(in_dt_no_unlimited$img_id)))) +
     scale_fill_brewer(palette="Spectral") +
-    theme(axis.title = element_text(size = 16, face="bold"), text=element_text(size=16, face="bold"), plot.title = element_text(size = 14,face="bold")) +
+    #theme(axis.title = element_text(size = 16, face="bold"), text=element_text(size=16, face="bold"), plot.title = element_text(size = 14,face="bold")) +
     geom_text(data = anno, aes(x = xstar,  y = ystar, label = lab)) +
     geom_segment(data = anno, aes(x = x1, xend = x1,
                                   y = y1, yend = y2),
@@ -258,8 +258,8 @@ plot_kl_divergence <- function(in_dt_raw, title, suffix = "", batch_no = "") {
   
   print(p)
   
-  ggsave(paste0(batch_number, "-analysis-pilot-approx-no-unlimited-subset-kl-divergence-", suffix, ".png"))
-  
+  save_plot_to_file(p, filenm = paste0(batch_number, "-analysis-pilot-approx-no-unlimited-subset-kl-divergence-", suffix, ".png"), h = A4_HEIGHT/2, w = A4_WIDTH/2)
+
   t <- lmer(kl_value ~ 1 + kl_type + (1 | img_id), data = in_dt_subset)
   print(summary(t))
 

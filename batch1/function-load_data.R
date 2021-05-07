@@ -7,15 +7,15 @@ load_data <- function(summary_file, details_file, by_subject = FALSE) {
   details_df = subset(details_df, subject %in% summary_df$script.subjectid)
 
   all_df <- data.table();
-  
+
   # Practice data
   practice_block_df <- details_df[blockcode=='practice_block' & response != 0,]
   if (nrow(practice_block_df) > 0) {
     practice.data <- practice_block_df %>%
       spread(trialcode, response) %>%
-      .[, .(subject, blocknum, trialnum, values.soa, values.img_file, 
+      .[, .(subject, blocknum, trialnum, latency, values.soa, values.img_file, 
             d1, rb1, d2, rb2, d3, rb3, d4, rb4, d5, rb5)] %>%
-      arrange(subject, blocknum, trialnum);
+      arrange(subject, blocknum, trialnum, latency);
     practice.data <- data.table(practice.data)
     
     all_df <- construct_table_by_exp_data(practice.data, by_subject)
@@ -26,13 +26,14 @@ load_data <- function(summary_file, details_file, by_subject = FALSE) {
   
   exp.data <- actual_block_df %>%
     spread(trialcode, response) %>%
-    .[, .(subject, blocknum, trialnum, values.soa, values.img_file, 
+    .[, .(subject, blocknum, trialnum, latency, values.soa, values.img_file, 
           d1, rb1, d2, rb2, d3, rb3, d4, rb4, d5, rb5)] %>%
-    arrange(subject, blocknum, trialnum);
+    arrange(subject, blocknum, trialnum, latency);
   
   exp.data <- data.table(exp.data)
   all_df <- rbind(all_df, construct_table_by_exp_data(exp.data, by_subject))
 
+  
   # Here we merged in the group id that the subject belongs to (only if we retrieve the subject)
   if (by_subject) {
     subject_groupid <- data.table(subject = as.character(summary_df$script.subjectid), group = summary_df$script.groupid)
@@ -68,15 +69,16 @@ plot_word_cloud_for_image <- function(details_df, img_id, soa) {
   img_soa.data <- exp.data[values.img_file == img_id & values.soa == soa,]
   block_trial = unique(img_soa.data[,c('blocknum','trialnum')])
   number_of_data = length(unique(img_soa.data$subject))
-  word_list = plot_word_cloud(img_soa.data, paste("SOA = ", soa, "ms (N=", number_of_data, ")"), TRUE)
+  #word_list = plot_word_cloud(img_soa.data, paste("SOA = ", soa, "ms (N=", number_of_data, ")"), FALSE)
 }
 
 construct_table_by_exp_data <- function(experiment.data, by_subject = FALSE) {
   all_df = data.table()
+  
   for (img in unique(experiment.data$values.img_file)) {
     
     # Uncomment the following line - useful to debug for particular image.
-    # if (img != "im0000550.jpg") {
+    # if (img != "im0000014.jpg") {
     #   next
     # }
     
@@ -98,7 +100,7 @@ construct_table_by_exp_data <- function(experiment.data, by_subject = FALSE) {
       img_soa.data <- experiment.data[values.img_file == img & values.soa == soa,]
       block_trial = unique(img_soa.data[,c('blocknum','trialnum')])
       number_of_data = nrow(block_trial);
-      word_list = plot_word_cloud(img_soa.data, paste("SOA = ", soa, "ms (N=", number_of_data, ")"), small_word_cound, FALSE)
+      word_list = plot_word_cloud(img_soa.data, paste("SOA = ", soa, "ms (N=", number_of_data, ")"), small_word_cound, plot_word_cloud = FALSE, na_dont_know_words = FALSE)
       
       if (is.null(word_list) | number_of_data == 0) {
         next
@@ -107,9 +109,10 @@ construct_table_by_exp_data <- function(experiment.data, by_subject = FALSE) {
       # img_soa.data.long <- melt(img_soa.data, id.vars = c("subject", "blocknum","trialnum", "values.soa", "values.est_soa"),   
       #                           measure.vars = c("d1","d2","d3","d4","d5",
       #                                            "rb1","rb2","rb3","rb4","rb5"))
-      img_soa.data.long <- melt(img_soa.data, id.vars = c("subject", "blocknum","trialnum", "values.soa", "values.est_soa"),   
+      img_soa.data.long <- melt(img_soa.data, id.vars = c("subject", "blocknum","trialnum", "latency", "values.soa"),   
                                 measure.vars = c("d1","d2","d3","d4","d5",
                                                  "rb1","rb2","rb3","rb4","rb5"))
+      
       
       # Code the confidence ratings (convert text to numbers)
       img_soa.data.long[which(startsWith(as.character(img_soa.data.long$variable), "rb") & img_soa.data.long$value == "Don't Know"),]$value <- "0"
@@ -149,7 +152,8 @@ construct_table_by_exp_data <- function(experiment.data, by_subject = FALSE) {
             one_row <- data.table(img, soa, subject = as.character(sbj), word = a_word, 
                                   frequency = 1, 
                                   confidence = subject_confidence[subject == sbj]$confidence,
-                                  trialnum = subject_confidence[subject == sbj]$trialnum)
+                                  trialnum = subject_confidence[subject == sbj]$trialnum,
+                                  latency = subject_confidence[subject == sbj]$latency)
             all_df <- rbind(all_df, one_row)
           }
         } else {
@@ -166,12 +170,18 @@ construct_table_by_exp_data <- function(experiment.data, by_subject = FALSE) {
         }
       }
     }
+
+    
   }
   
+
   if (length(all_df) != 0) {
-    all_df <- all_df[, img_id := as.integer(gsub("im[0]*([1-9][0-9]*).jpg", "\\1", img))]
+    #all_df <- all_df[, img_id := as.integer(gsub("im[0]*([1-9][0-9]*).jpg", "\\1", img))]
+    ## REMOVE ME
+    all_df <- all_df[, img_id := img]
   }
   
+
   return(all_df)
 }
 

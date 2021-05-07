@@ -26,12 +26,15 @@ source('function-load_alon_descriptors.R')
 source('function-load_data.R')
 source('function-load_subject_data.R')
 source('function-plot_kl_divergence.R')
+source('function-plot_utilities.R')
 source('function-plot_word_cloud.R')
 source('function-utilities.R')
 source('function-validate_img_soa_group_numbers.R')
 ```
 
 ```{r configuration}
+theme_set(get_custom_theme())
+
 load(file = "psy4100_master_data.RData")
 
 print(paste0("Total participants (includes Shinji's): ", total_subjects))
@@ -99,7 +102,7 @@ cb <- ggarrange(p_unlimited, p_67, p_133, p_267,
 ```{r, warning=TRUE, message=FALSE, echo = FALSE}
 full_raw_subject_df$age <- str_replace(full_raw_subject_df$age, " years old", "")
 
-theme_set(theme_pubclean())
+#theme_set(theme_pubclean())
 
 p1 <- ggplot(full_raw_subject_df, aes(x = sex)) +
   geom_bar(stat = "count", fill = "grey80") +
@@ -168,7 +171,7 @@ soa_diff_df <- details_df[
 s <- summary(soa_diff_df)
 s
 
-theme_set(theme_cowplot())
+#theme_set(theme_cowplot())
 soa_diff <- ggplot(soa_diff_df, aes(x='Presentation Time (PT) Difference', y=diff_soa_ms)) +
    geom_boxplot(outlier.alpha = "0.2")  +
     scale_y_continuous(limits = c(-5, 5)) +
@@ -219,7 +222,7 @@ ggsave(soa_diff, height=h, width= h*ar, filename = "soa_differences.png")
 ```{r }
 ## Analyse Don't Know confidence and Very Confident
 
-theme_set(theme_cowplot())
+#theme_set(theme_cowplot())
 
 confidence_df <- copy(master_raw_df)
 confidence_df <- confidence_df[soa != 'Unlimited' & !img_id %in% c(3, 9, 14)]
@@ -443,21 +446,20 @@ plt_df$soa <- factor(plt_df$soa)
 
 # Combined confidence
 
+theme_set(get_custom_theme())
 plt_df$confidence <- as.factor(plt_df$confidence)
 confidence_split_plot <- ggplot(plt_df, aes(x = soa, fill=confidence)) +
   geom_bar(position = 'fill', stat = "count") +
   xlab("Presentation Duration (ms)") +
   ylab("Proportion of Ratings (%)") +
   scale_y_continuous(expand = c(0, 0), labels = function(x) paste0(x*100)) +
-  theme(legend.text = element_text(size=16), axis.text = element_text(size = 22),
-        axis.title=element_text(size=22,face="bold"), plot.title = element_text(size = 20)) +
-  ggtitle(paste0("Total number of confidence ratings = ", formatC(length(plt_df$confidence), format='f', big.mark=',', digits=0))) + 
+  # theme(legend.text = element_text(size=16), axis.text = element_text(size = 22),
+  #       axis.title=element_text(size=22,face="bold"), plot.title = element_text(size = 20)) +
+  #ggtitle(paste0("Total number of confidence ratings = ", formatC(length(plt_df$confidence), format='f', big.mark=',', digits=0))) + 
   scale_fill_brewer(palette="Paired",name = "Confidence Rating", 
                   labels = c("Don't know", "Guess", "Maybe", "Confident", "Very Confident"))
 
-h <- 7
-ar <- 1.5
-ggsave(confidence_split_plot, height=h, width= h*ar, filename = "confidence_split.png")
+save_plot_to_file(confidence_split_plot, filenm = "confidence_split.png", h=A4_HEIGHT/2, w=A4_WIDTH/2)
 
 freq_conf_df <- confidence_df[, .(total_freq = sum(frequency), avg_confidence = mean(confidence)), by = c("img_id", "soa", "word")]
 
@@ -768,7 +770,7 @@ ks.test(kl_67_133$kl_value, kl_67_267$kl_value)
 ks.test(kl_133_67$kl_value, kl_133_267$kl_value)
 ks.test(kl_267_67$kl_value, kl_267_133$kl_value)
 
-theme_set(theme_cowplot())
+#theme_set(theme_cowplot())
 plot_kl_divergence(melt_kl_df, paste0(""), "proportion", batch_no = batch_number)
 
 # plot_kl_divergence(melt_kl_weighted_pror_stem_stats_dt, paste0("[", batch_number, "] KL Divergence (Weighted Proportion) - stemmed but no filter"), "weighted", batch_no = batch_number)
@@ -842,7 +844,7 @@ ggsave(plt, height=h, width= h*ar, filename = "JSD matrix distribution.png")
 ## INDIVIDUAL IMAGE GENERATION
 
 # Plot single image analysis
-theme_set(theme_minimal())
+#theme_set(theme_minimal())
 # theme_set(theme_cowplot())
 
 # analyse_plot_single_image(master_raw_df, 9999001, )
@@ -861,7 +863,7 @@ img_stem_plt_df <- img_stem_plt_df[, -c("agg_word", "stem_word")]
 # # analyse_plot_single_image(img_stem_plt_df, 9999003, 1)
 img_stem_plt_df <- img_stem_plt_df[!img_id %in% c(3, 9, 14),]
 
-theme_set(theme_minimal())
+#theme_set(theme_minimal())
 #analyse_plot_single_image(img_stem_plt_df, 312, 1)
 analyse_plot_single_image(img_stem_plt_df, 4865, 1)
 #analyse_plot_single_image(img_stem_plt_df, 9999002, 1)

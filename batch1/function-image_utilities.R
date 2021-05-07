@@ -9,7 +9,7 @@ get_image_by_id <- function(nishimoto_images_folder, img_id) {
 
 ## @knitr function-get_image_id_by_filename
 get_image_id_by_filename <- function(image_filename) {
-  return(as.integer(gsub("im[0]+([1-9][0-9]*).jpg", "\\1", image_filename)))
+  return(as.integer(gsub("im[0]*([1-9][0-9]*).jpg", "\\1", image_filename)))
 }
 
 ## @knitr function-get_batch_image_ids

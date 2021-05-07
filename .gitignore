@@ -3,7 +3,7 @@
 .Rapp.history
 
 # Session Data files
-.RData
+#.RData
 
 # Example code in package build process
 *-Ex.R
@@ -39,3 +39,17 @@ rsconnect/
 analysis-report/*
 **/.ipynb_checkpoints/*
 analysis-output/*
+.Rproj.user
+.DS_Store
+
+**/*.png
+**/*.csv
+**/*.jpg
+**/*.RData
+**/.python-version
+**/.DS_Store
+**/*.pdf
+**/*.html
+.DS_Store
+analysis-data/monkey_raw.xlsx
+analysis-data/monkey_summary.xlsx
